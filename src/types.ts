@@ -45,7 +45,7 @@ export function createInitialState(sessionId: string): SharedSimulationState {
     sceneMode: 'solar',
     scaleMode: 'cinematic',
     selectedTargetId: 'earth',
-    timeScale: 1,
+    timeScale: 1 / 86_400,
     bezelPixels: 0,
     away: {
       active: false,
