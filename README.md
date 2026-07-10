@@ -48,4 +48,6 @@ This application combines sourced astronomical parameters with visualization-ori
 
 The checked-in catalog is broad but is not yet the complete set of every provisional moon, asteroid, comet, spacecraft, and Gaia star. The included data workflow is the foundation for progressively generated and tiled catalogs at that scale.
 
+The expanded renderer currently produces a large client bundle. Code splitting, optimized local WebP/KTX2 textures, and spatially tiled catalogs are planned before the full data-volume phase.
+
 See [visual realism](docs/visual-realism.md) and [architecture](docs/architecture.md).
