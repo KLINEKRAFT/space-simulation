@@ -15,11 +15,17 @@ A public, browser-based cinematic space explorer designed for one display or a s
 - ACES tone mapping, threshold bloom, and FXAA
 
 ### Interaction
-- Click any body in the scene to target it; eased cinematic fly-to on every selection
+- Click any body, **orbit line, or asteroid** in the scene to target it; eased cinematic fly-to on every selection, with a crosshair marker on selected minor bodies
+- ~1,100-object minor-body belt: named main-belt asteroids, a distributed belt honouring the Kirkwood gaps, Jupiter Trojans at the L4/L5 points, trans-Neptunian objects, near-Earth asteroids, and well-known comets — all Keplerian and individually selectable
 - Distance-faded floating body labels
 - Time deck: pause/resume (`Space`), rate presets from real-time to a year per second, live simulated-epoch readout, and a `NOW` reset
 - Cinematic camera and manual free flight
-- Full solar catalog (Sun, planets, dwarf planets, candidates, named moons) plus confirmed NASA Exoplanet Archive host systems with fly-in schematic views
+- Full solar catalog (Sun, planets, dwarf planets, candidates, named moons, minor bodies) with class filters, plus confirmed NASA Exoplanet Archive host systems with fly-in schematic views
+
+### Minimal, get-out-of-the-way interface
+- A compact top-left region switcher and a small top-right toolbar (catalog, view menu, fullscreen, settings) — no persistent chrome bar
+- A **View** menu toggles orbits, labels, the asteroid belt, the catalog, the target panel, and the time bar independently
+- Hide the bottom time bar on its own, or press `H` to strip **all** interface for a clean wall-display view
 
 ### Platform
 - Synchronized left/right browser windows, fullscreen controls, and bezel correction
@@ -46,15 +52,15 @@ The feature branch currently passes its GitHub Actions install, unit-test, TypeS
 
 ## Controls
 
-- Click a planet, moon, or star: set it as the active target
+- Click a planet, moon, star, orbit line, or asteroid: set it as the active target
 - Drag / scroll: orbit and zoom in free-flight mode
-- `W A S D`: move
-- `Q / E`: vertical movement
-- `Shift`: boost
+- `W A S D`: move · `Q / E`: vertical movement · `Shift`: boost
 - `Space`: pause / resume simulation time
-- `H`: hide or show the interface (clean wall-display view)
+- `H`: hide or show all interface (clean wall-display view)
+- `B`: toggle the bottom time bar
+- `C`: toggle the catalog · `V`: toggle the view menu
+- `O`: toggle orbit paths · `L`: toggle body labels
 - `Control + Shift + O`: settings and away mode
-- `Control + Shift + K`: object catalog
 
 ## Accuracy boundary
 

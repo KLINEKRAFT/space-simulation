@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ExoplanetSystem } from '../data/exoplanets'
-import { DAY_MS, SOLAR_BODIES, SOLAR_BODY_MAP, type SolarBody } from '../data/solarCatalog'
+import { DAY_MS, J2000_MS, SOLAR_BODIES, SOLAR_BODY_MAP, type SolarBody } from '../data/solarCatalog'
+import { MINOR_BODIES } from '../data/minorBodies'
 import type { ScaleMode, Vec3Tuple } from '../types'
 import {
   createAtmosphere,
@@ -27,6 +28,18 @@ export interface BodyVisual {
   ring?: RingHandle
   radius: number
 }
+export interface MinorBelt {
+  points: THREE.Points
+  geometry: THREE.BufferGeometry
+  bodies: SolarBody[]
+  indexById: Map<string, number>
+  positions: Float32Array
+}
+export interface SelectionMarker {
+  group: THREE.Group
+  reticle: THREE.Sprite
+  label: THREE.Sprite
+}
 export interface SolarScene {
   group: THREE.Group
   visuals: Map<string, BodyVisual>
@@ -34,6 +47,9 @@ export interface SolarScene {
   sunUniforms: { time: { value: number } }
   light: THREE.PointLight
   pickables: THREE.Object3D[]
+  orbitPickables: THREE.Object3D[]
+  belt: MinorBelt
+  marker: SelectionMarker
 }
 export interface GalaxyScene {
   group: THREE.Group
@@ -51,6 +67,9 @@ export interface StarFieldHandle {
 
 export const CAMERA_FAR = 12_000
 export function tuple(vector: THREE.Vector3): Vec3Tuple { return [vector.x, vector.y, vector.z] }
+
+const SCRATCH_A = new THREE.Vector3()
+const SCRATCH_B = new THREE.Vector3()
 
 function makeCanvas(width: number, height: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const canvas = document.createElement('canvas')
@@ -119,11 +138,108 @@ function softPointsMaterial(twinkle: number, opacity: number, maxPx = 15): {
   return { material, uniforms }
 }
 
+/* ------------------------------------------------------------------ */
+/* Realistic stars: power-law brightness with diffraction spikes on    */
+/* the brightest, colored by stellar temperature class.                */
+/* ------------------------------------------------------------------ */
+
+interface StarMaterialOptions {
+  maxPx: number
+  twinkle: number
+  opacity: number
+  spikes: number
+}
+
+function starPointsMaterial(options: StarMaterialOptions): {
+  material: THREE.ShaderMaterial
+  uniforms: { time: { value: number }; dpr: { value: number } }
+} {
+  const uniforms = {
+    time: { value: 0 },
+    dpr: { value: 1 },
+    twinkleAmp: { value: options.twinkle },
+    masterOpacity: { value: options.opacity },
+    maxPx: { value: options.maxPx },
+    spikeStrength: { value: options.spikes },
+  }
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: /* glsl */ `
+      attribute float size;
+      attribute float mag;   // apparent brightness 0..1 (few near 1)
+      attribute float phase;
+      uniform float time;
+      uniform float dpr;
+      uniform float twinkleAmp;
+      uniform float maxPx;
+      varying vec3 vColor;
+      varying float vTwinkle;
+      varying float vMag;
+      void main() {
+        vColor = color;
+        vMag = mag;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        float speed = 0.4 + fract(phase * 13.7) * 2.1;
+        vTwinkle = 1.0 - twinkleAmp + twinkleAmp * (0.5 + 0.5 * sin(time * speed + phase * 6.2831));
+        // Bright stars claim a larger sprite so their spikes have room to draw.
+        float base = size * (1600.0 / max(1.0, -mv.z)) * dpr;
+        float px = base * (1.0 + mag * mag * 7.0);
+        gl_PointSize = clamp(px, 0.7 * dpr, maxPx * dpr);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float masterOpacity;
+      uniform float spikeStrength;
+      varying vec3 vColor;
+      varying float vTwinkle;
+      varying float vMag;
+      void main() {
+        vec2 uv = gl_PointCoord * 2.0 - 1.0;
+        float r = length(uv);
+        if (r > 1.0) discard;
+        // Soft round core with a bright pip.
+        float core = exp(-r * r * 6.0) + smoothstep(0.22, 0.0, r) * 0.75;
+        // Four-point diffraction spikes, visible only on the brightest stars.
+        float ax = abs(uv.x);
+        float ay = abs(uv.y);
+        float spikeH = exp(-ay * ay * 260.0) * (1.0 - ax);
+        float spikeV = exp(-ax * ax * 260.0) * (1.0 - ay);
+        float spikes = (spikeH + spikeV) * spikeStrength * pow(vMag, 1.6);
+        // Faint diagonal glints on the very brightest.
+        float diag = exp(-abs(ax - ay) * abs(ax - ay) * 120.0) * (1.0 - r) * spikeStrength * 0.22 * pow(vMag, 2.4);
+        float intensity = (core + spikes + diag) * vTwinkle;
+        if (intensity < 0.004) discard;
+        // Bright cores exceed 1.0 so the bloom pass blooms them.
+        gl_FragColor = vec4(vColor * intensity * masterOpacity * (0.7 + vMag * 1.4), 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+  return { material, uniforms }
+}
+
+/** Stellar colors from a hot-blue to cool-red temperature draw. */
+function drawStarColor(target: THREE.Color, roll: number): void {
+  if (roll < 0.04) target.set('#9bb8ff')        // O/B
+  else if (roll < 0.12) target.set('#c3d2ff')   // A
+  else if (roll < 0.34) target.set('#f4f2ea')    // F/G white
+  else if (roll < 0.62) target.set('#fff4d6')    // G yellow
+  else if (roll < 0.86) target.set('#ffdca6')    // K orange
+  else target.set('#ffb389')                      // M red
+}
+
 export function createStarField(count: number): StarFieldHandle {
   const random = seededRandom('starfield-2026')
   const positions = new Float32Array(count * 3)
   const colors = new Float32Array(count * 3)
   const sizes = new Float32Array(count)
+  const mags = new Float32Array(count)
   const phases = new Float32Array(count)
   const color = new THREE.Color()
   for (let index = 0; index < count; index += 1) {
@@ -133,26 +249,26 @@ export function createStarField(count: number): StarFieldHandle {
     positions[index * 3] = radius * Math.sin(phi) * Math.cos(theta)
     positions[index * 3 + 1] = radius * Math.cos(phi)
     positions[index * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta)
-    const temperature = random()
-    if (temperature < 0.1) color.set('#a8c2ff')
-    else if (temperature < 0.24) color.set('#cfdcff')
-    else if (temperature < 0.78) color.set('#f6f1e4')
-    else if (temperature < 0.94) color.set('#ffd9a6')
-    else color.set('#ff9f76')
-    const brightness = 0.5 + Math.pow(random(), 2.2) * 0.6
+    drawStarColor(color, random())
+    // Steep power law: the overwhelming majority are faint, a rare few blaze.
+    const magnitude = Math.pow(random(), 6.0)
+    const brightness = 0.55 + magnitude * 0.9
     colors[index * 3] = color.r * brightness
     colors[index * 3 + 1] = color.g * brightness
     colors[index * 3 + 2] = color.b * brightness
-    sizes[index] = 0.7 + Math.pow(random(), 3.4) * 4.2
+    sizes[index] = 0.8 + magnitude * 1.4
+    mags[index] = magnitude
     phases[index] = random()
   }
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1))
+  geometry.setAttribute('mag', new THREE.BufferAttribute(mags, 1))
   geometry.setAttribute('phase', new THREE.BufferAttribute(phases, 1))
-  const { material, uniforms } = softPointsMaterial(0.55, 0.95)
+  const { material, uniforms } = starPointsMaterial({ maxPx: 46, twinkle: 0.5, opacity: 1, spikes: 0.9 })
   const points = new THREE.Points(geometry, material)
+  points.frustumCulled = false
   return { points, uniforms }
 }
 
@@ -413,11 +529,152 @@ function createOrbitLine(radius: number, eccentricity: number, inclinationDeg: n
   return line
 }
 
+/** Allocation-free Kepler position, written into `target`. */
+function orbitalPositionInto(target: THREE.Vector3, body: SolarBody, orbitRadius: number, elapsedDays: number): void {
+  if (!body.orbitalPeriodDays || orbitRadius === 0) {
+    target.set(0, 0, 0)
+    return
+  }
+  const period = Math.abs(body.orbitalPeriodDays)
+  const direction = body.orbitalPeriodDays < 0 ? -1 : 1
+  const meanLongitude = THREE.MathUtils.degToRad(body.meanLongitudeDeg ?? 0)
+  const meanAnomaly = meanLongitude + direction * ((elapsedDays % period) / period) * Math.PI * 2
+  const eccentricity = Math.min(0.97, Math.max(0, body.eccentricity ?? 0))
+  const eccentricAnomaly = solveEccentricAnomaly(meanAnomaly, eccentricity)
+  const x = orbitRadius * (Math.cos(eccentricAnomaly) - eccentricity)
+  const z = orbitRadius * Math.sqrt(1 - eccentricity * eccentricity) * Math.sin(eccentricAnomaly)
+  const inclination = THREE.MathUtils.degToRad(body.inclinationDeg ?? 0)
+  const sinI = Math.sin(inclination)
+  const cosI = Math.cos(inclination)
+  target.set(x, -z * sinI, z * cosI)
+}
+
+const MINOR_KIND_MAX = 4.6
+
+/**
+ * The generated minor-body catalog rendered as a single point field. Positions
+ * are recomputed from each body's Keplerian elements every frame in
+ * updateMinorBelt; the belt is far too numerous for individual meshes.
+ */
+export function createMinorBelt(scaleMode: ScaleMode, elapsedDays: number): MinorBelt {
+  const bodies = MINOR_BODIES
+  const count = bodies.length
+  const positions = new Float32Array(count * 3)
+  const colors = new Float32Array(count * 3)
+  const sizes = new Float32Array(count)
+  const phases = new Float32Array(count)
+  const indexById = new Map<string, number>()
+  const color = new THREE.Color()
+  const scratch = new THREE.Vector3()
+  const random = seededRandom('belt-phase')
+  bodies.forEach((body, index) => {
+    indexById.set(body.id, index)
+    const orbitRadius = primaryOrbitRadius(body, scaleMode)
+    orbitalPositionInto(scratch, body, orbitRadius, elapsedDays)
+    positions[index * 3] = scratch.x
+    positions[index * 3 + 1] = scratch.y
+    positions[index * 3 + 2] = scratch.z
+    // Lift the additive base color so specks read against black.
+    color.set(body.color).multiplyScalar(1.35)
+    colors[index * 3] = color.r
+    colors[index * 3 + 1] = color.g
+    colors[index * 3 + 2] = color.b
+    sizes[index] = Math.min(MINOR_KIND_MAX, 1.2 + Math.log10(1 + body.radiusKm) * 0.8)
+    phases[index] = random()
+  })
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1))
+  geometry.setAttribute('phase', new THREE.BufferAttribute(phases, 1))
+  const { material } = softPointsMaterial(0.25, 0.95, 4.8)
+  const points = new THREE.Points(geometry, material)
+  points.frustumCulled = false
+  return { points, geometry, bodies, indexById, positions }
+}
+
+function updateMinorBelt(belt: MinorBelt, scaleMode: ScaleMode, elapsedDays: number): void {
+  const scratch = SCRATCH_A
+  const positions = belt.positions
+  for (let index = 0; index < belt.bodies.length; index += 1) {
+    const body = belt.bodies[index]
+    const orbitRadius = primaryOrbitRadius(body, scaleMode)
+    orbitalPositionInto(scratch, body, orbitRadius, elapsedDays)
+    positions[index * 3] = scratch.x
+    positions[index * 3 + 1] = scratch.y
+    positions[index * 3 + 2] = scratch.z
+  }
+  ;(belt.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true
+}
+
+/** A crosshair reticle + name label that tracks the selected minor body. */
+function createReticleSprite(): THREE.Sprite {
+  const size = 256
+  const [canvas, context] = makeCanvas(size, size)
+  const center = size / 2
+  context.strokeStyle = 'rgba(134, 210, 242, 0.95)'
+  context.lineWidth = 4
+  context.beginPath()
+  context.arc(center, center, 78, 0, Math.PI * 2)
+  context.stroke()
+  context.lineWidth = 3
+  for (let angle = 0; angle < 4; angle += 1) {
+    const a = (angle / 4) * Math.PI * 2
+    context.beginPath()
+    context.moveTo(center + Math.cos(a) * 60, center + Math.sin(a) * 60)
+    context.lineTo(center + Math.cos(a) * 96, center + Math.sin(a) * 96)
+    context.stroke()
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    opacity: 0,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }))
+  sprite.renderOrder = 21
+  return sprite
+}
+
+function createSelectionMarker(): SelectionMarker {
+  const group = new THREE.Group()
+  const reticle = createReticleSprite()
+  const label = createLabelSprite('')
+  label.material.opacity = 0
+  group.add(reticle)
+  group.add(label)
+  group.visible = false
+  return { group, reticle, label }
+}
+
+function setLabelText(label: THREE.Sprite, name: string): void {
+  const material = label.material as THREE.SpriteMaterial
+  const previous = material.map
+  const [canvas, context] = makeCanvas(512, 128)
+  context.font = '500 44px "IBM Plex Mono", ui-monospace, monospace'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  const text = name.toUpperCase()
+  context.shadowColor = 'rgba(126, 205, 255, 0.75)'
+  context.shadowBlur = 18
+  context.fillStyle = 'rgba(228, 243, 252, 0.94)'
+  context.fillText(text, 256, 64)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  material.map = texture
+  material.needsUpdate = true
+  previous?.dispose()
+}
+
 export function buildSolarScene(anisotropy: number, scaleMode: ScaleMode): SolarScene {
   const group = new THREE.Group()
   const visuals = new Map<string, BodyVisual>()
   const positions = new Map<string, THREE.Vector3>()
   const pickables: THREE.Object3D[] = []
+  const orbitPickables: THREE.Object3D[] = []
   const labels = new THREE.Group()
   group.add(labels)
 
@@ -472,13 +729,23 @@ export function buildSolarScene(anisotropy: number, scaleMode: ScaleMode): Solar
       body.kind === 'moon' ? 0x3e5a6b : 0x4d6f84,
       body.kind === 'moon' ? 0.12 : 0.24,
     )
+    orbit.userData.bodyId = body.id
     group.add(orbit)
+    // Moon orbits are tiny and overlap their planet; only expose primary
+    // orbits to the orbit-line picker.
+    if (body.kind !== 'moon') orbitPickables.push(orbit)
     const label = body.kind !== 'moon' || MAJOR_MOONS.has(body.id) ? createLabelSprite(body.name) : undefined
     if (label) labels.add(label)
     visuals.set(body.id, { body, mesh, orbit, label, surface, atmosphere, ring, radius })
     positions.set(body.id, new THREE.Vector3())
   }
-  return { group, visuals, positions, sunUniforms: sun.uniforms, light, pickables }
+
+  const belt = createMinorBelt(scaleMode, (Date.now() - J2000_MS) / DAY_MS)
+  group.add(belt.points)
+  const marker = createSelectionMarker()
+  group.add(marker.group)
+
+  return { group, visuals, positions, sunUniforms: sun.uniforms, light, pickables, orbitPickables, belt, marker }
 }
 
 /* ------------------------------------------------------------------ */
@@ -499,6 +766,7 @@ export function buildGalaxyScene(systems: ExoplanetSystem[]): GalaxyScene {
   const pointPositions = new Float32Array(systems.length * 3)
   const pointColors = new Float32Array(systems.length * 3)
   const pointSizes = new Float32Array(systems.length)
+  const pointMags = new Float32Array(systems.length)
   const pointPhases = new Float32Array(systems.length)
   const color = new THREE.Color()
   const random = seededRandom('exoplanet-field')
@@ -517,15 +785,18 @@ export function buildGalaxyScene(systems: ExoplanetSystem[]): GalaxyScene {
     pointColors[index * 3] = color.r
     pointColors[index * 3 + 1] = color.g
     pointColors[index * 3 + 2] = color.b
-    pointSizes[index] = 1.6 + random() * 2.2
+    pointSizes[index] = 1.1 + random() * 1.4
+    // Nearer systems read as brighter, anchored to a rare-bright power law.
+    pointMags[index] = Math.min(1, 0.42 + Math.pow(random(), 2.2) * 0.7)
     pointPhases[index] = random()
   })
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3))
   geometry.setAttribute('color', new THREE.BufferAttribute(pointColors, 3))
   geometry.setAttribute('size', new THREE.BufferAttribute(pointSizes, 1))
+  geometry.setAttribute('mag', new THREE.BufferAttribute(pointMags, 1))
   geometry.setAttribute('phase', new THREE.BufferAttribute(pointPhases, 1))
-  const { material } = softPointsMaterial(0.4, 1)
+  const { material } = starPointsMaterial({ maxPx: 52, twinkle: 0.42, opacity: 1, spikes: 1 })
   const starPoints = new THREE.Points(geometry, material)
   group.add(starPoints)
   group.add(createMilkyWay(64_000))
@@ -597,7 +868,11 @@ export function updateSolarScene(
   elapsedDays: number,
   deltaSeconds: number,
   selectedTargetId?: string,
+  orbitsVisible = true,
+  minorBodiesVisible = true,
 ): void {
+  updateMinorBelt(solar.belt, scaleMode, elapsedDays)
+  solar.belt.points.visible = minorBodiesVisible
   for (const body of SOLAR_BODIES) {
     const visual = solar.visuals.get(body.id)
     if (!visual) continue
@@ -629,6 +904,7 @@ export function updateSolarScene(
     }
 
     if (visual.orbit) {
+      visual.orbit.visible = orbitsVisible
       const material = visual.orbit.material as THREE.LineBasicMaterial
       const isSelected = selectedTargetId === body.id
       const baseOpacity = body.kind === 'moon' ? 0.12 : 0.24
@@ -636,6 +912,49 @@ export function updateSolarScene(
       material.color.set(isSelected ? 0x86d2f2 : body.kind === 'moon' ? 0x3e5a6b : 0x4d6f84)
     }
   }
+}
+
+/** Reads the current belt position of a minor body into `out`; false if absent. */
+export function getMinorBodyPosition(solar: SolarScene, id: string, out: THREE.Vector3): boolean {
+  const index = solar.belt.indexById.get(id)
+  if (index === undefined) return false
+  out.set(
+    solar.belt.positions[index * 3],
+    solar.belt.positions[index * 3 + 1],
+    solar.belt.positions[index * 3 + 2],
+  )
+  return true
+}
+
+/** Positions the crosshair marker + name on the selected minor body. */
+export function updateSelectionMarker(
+  solar: SolarScene,
+  camera: THREE.Camera,
+  selectedId: string,
+  visible: boolean,
+): void {
+  const marker = solar.marker
+  const index = solar.belt.indexById.get(selectedId)
+  const active = visible && index !== undefined
+  const reticleMaterial = marker.reticle.material as THREE.SpriteMaterial
+  const labelMaterial = marker.label.material as THREE.SpriteMaterial
+  const targetOpacity = active ? 1 : 0
+  reticleMaterial.opacity += (targetOpacity - reticleMaterial.opacity) * 0.16
+  labelMaterial.opacity += (targetOpacity * 0.95 - labelMaterial.opacity) * 0.16
+  marker.group.visible = reticleMaterial.opacity > 0.02
+  if (!marker.group.visible || index === undefined) return
+
+  if (marker.group.userData.id !== selectedId) {
+    marker.group.userData.id = selectedId
+    setLabelText(marker.label, solar.belt.bodies[index].name)
+  }
+  getMinorBodyPosition(solar, selectedId, SCRATCH_B)
+  const distance = camera.position.distanceTo(SCRATCH_B)
+  const reticleScale = Math.max(0.6, distance * 0.045)
+  marker.reticle.position.copy(SCRATCH_B)
+  marker.reticle.scale.setScalar(reticleScale)
+  marker.label.position.set(SCRATCH_B.x, SCRATCH_B.y + reticleScale * 0.5, SCRATCH_B.z)
+  marker.label.scale.set(reticleScale * 2.4, reticleScale * 0.6, 1)
 }
 
 export function disposeObject(object: THREE.Object3D): void {

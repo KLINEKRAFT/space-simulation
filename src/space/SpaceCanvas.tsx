@@ -21,8 +21,10 @@ import {
   createSkyDome,
   createStarField,
   disposeObject,
+  getMinorBodyPosition,
   rebuildExoplanetDetail,
   tuple,
+  updateSelectionMarker,
   updateSolarLabels,
   updateSolarScene,
 } from './scenes'
@@ -37,6 +39,8 @@ interface SpaceCanvasProps {
   timeScale: number
   timePaused: boolean
   labelsVisible: boolean
+  orbitsVisible: boolean
+  minorBodiesVisible: boolean
   simResetToken: number
   bezelPixels: number
   cameraPose: CameraPose
@@ -59,6 +63,8 @@ export function SpaceCanvas({
   timeScale,
   timePaused,
   labelsVisible,
+  orbitsVisible,
+  minorBodiesVisible,
   simResetToken,
   bezelPixels,
   cameraPose,
@@ -80,6 +86,8 @@ export function SpaceCanvas({
   const timeScaleRef = useRef(timeScale)
   const timePausedRef = useRef(timePaused)
   const labelsVisibleRef = useRef(labelsVisible)
+  const orbitsVisibleRef = useRef(orbitsVisible)
+  const minorBodiesVisibleRef = useRef(minorBodiesVisible)
   const simResetTokenRef = useRef(simResetToken)
   const bezelRef = useRef(bezelPixels)
   const navigationModeRef = useRef(navigationMode)
@@ -99,6 +107,8 @@ export function SpaceCanvas({
   timeScaleRef.current = timeScale
   timePausedRef.current = timePaused
   labelsVisibleRef.current = labelsVisible
+  orbitsVisibleRef.current = orbitsVisible
+  minorBodiesVisibleRef.current = minorBodiesVisible
   simResetTokenRef.current = simResetToken
   bezelRef.current = bezelPixels
   navigationModeRef.current = navigationMode
@@ -253,12 +263,22 @@ export function SpaceCanvas({
       activeScaleMode = scaleModeRef.current
     }
 
+    const minorScratch = new THREE.Vector3()
     const selectedSolarPosition = (): { position: THREE.Vector3; radius: number } => {
-      const visual = solar.visuals.get(selectedTargetRef.current) ?? solar.visuals.get('earth')!
-      return {
-        position: solar.positions.get(visual.body.id)?.clone() ?? new THREE.Vector3(),
-        radius: visual.radius,
+      const id = selectedTargetRef.current
+      const visual = solar.visuals.get(id)
+      if (visual) {
+        return {
+          position: solar.positions.get(visual.body.id)?.clone() ?? new THREE.Vector3(),
+          radius: visual.radius,
+        }
       }
+      // Minor bodies live in the point belt, not as meshes — read their live position.
+      if (getMinorBodyPosition(solar, id, minorScratch)) {
+        return { position: minorScratch.clone(), radius: 0.32 }
+      }
+      const earth = solar.visuals.get('earth')!
+      return { position: solar.positions.get('earth')?.clone() ?? new THREE.Vector3(), radius: earth.radius }
     }
 
     const updateVisibility = () => {
@@ -325,9 +345,27 @@ export function SpaceCanvas({
       )
       raycaster.setFromCamera(pointer, camera)
       if (sceneModeRef.current === 'solar') {
+        // Planets and moons first (solid spheres).
+        raycaster.params.Points.threshold = 3
         const hits = raycaster.intersectObjects(solar.pickables, false)
         const bodyId = hits[0]?.object.userData.bodyId as string | undefined
-        if (bodyId) onSelectTargetRef.current(bodyId)
+        if (bodyId) { onSelectTargetRef.current(bodyId); return }
+        // Then individual asteroids/comets in the point belt.
+        if (minorBodiesVisibleRef.current) {
+          const beltHits = raycaster.intersectObject(solar.belt.points, false)
+          const beltIndex = beltHits[0]?.index
+          if (beltIndex !== undefined) {
+            onSelectTargetRef.current(solar.belt.bodies[beltIndex].id)
+            return
+          }
+        }
+        // Finally the orbit lines themselves.
+        if (orbitsVisibleRef.current) {
+          raycaster.params.Line.threshold = Math.max(0.8, camera.position.distanceTo(controls.target) * 0.012)
+          const orbitHits = raycaster.intersectObjects(solar.orbitPickables, false)
+          const orbitId = orbitHits[0]?.object.userData.bodyId as string | undefined
+          if (orbitId) onSelectTargetRef.current(orbitId)
+        }
         return
       }
       if (sceneModeRef.current === 'galaxy') {
@@ -375,7 +413,15 @@ export function SpaceCanvas({
       const timeFrozen = pausedRef.current || timePausedRef.current
       if (!pausedRef.current) {
         if (!timeFrozen) simulationDays = advanceSimulationDays(simulationDays, deltaSeconds, timeScaleRef.current)
-        updateSolarScene(solar, scaleModeRef.current, simulationDays, timeFrozen ? 0 : deltaSeconds, selectedTargetRef.current)
+        updateSolarScene(
+          solar,
+          scaleModeRef.current,
+          simulationDays,
+          timeFrozen ? 0 : deltaSeconds,
+          selectedTargetRef.current,
+          orbitsVisibleRef.current,
+          minorBodiesVisibleRef.current,
+        )
         solar.sunUniforms.time.value += deltaSeconds
         stars.uniforms.time.value = elapsedSeconds
         if (galaxy.detailSunUniforms) galaxy.detailSunUniforms.time.value += deltaSeconds
@@ -391,6 +437,7 @@ export function SpaceCanvas({
       publishPose(now)
       publishSimDays(now)
       updateSolarLabels(solar, camera, labelsVisibleRef.current && sceneModeRef.current === 'solar')
+      updateSelectionMarker(solar, camera, selectedTargetRef.current, sceneModeRef.current === 'solar' && minorBodiesVisibleRef.current)
       composer.render()
       frameCount += 1
       if (now - fpsWindowStart >= 1000) {

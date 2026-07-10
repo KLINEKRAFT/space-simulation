@@ -1,4 +1,16 @@
-export type BodyKind = 'star' | 'planet' | 'dwarf' | 'candidate' | 'moon'
+import { MINOR_BODIES } from './minorBodies'
+
+export type BodyKind =
+  | 'star'
+  | 'planet'
+  | 'dwarf'
+  | 'candidate'
+  | 'moon'
+  | 'asteroid'
+  | 'trojan'
+  | 'tno'
+  | 'nea'
+  | 'comet'
 export type SurfaceStyle = 'sun' | 'rocky' | 'venus' | 'earth' | 'mars' | 'gas' | 'saturn' | 'ice' | 'dwarf' | 'pluto' | 'moon' | 'io' | 'titan' | 'triton'
 
 export interface RingDefinition {
@@ -140,12 +152,23 @@ export const SOLAR_BODIES: SolarBody[] = [
   body({ id: 'ilmarë', name: 'Ilmarë', kind: 'moon', parentId: 'varda', radiusKm: 163, orbitKm: 4800, orbitalPeriodDays: 5.75, style: 'moon', color: '#96918a' }),
 ]
 
-export const SOLAR_BODY_MAP = new Map(SOLAR_BODIES.map((item) => [item.id, item]))
 export const PRIMARY_DESTINATIONS = SOLAR_BODIES.filter((item) => item.kind === 'planet' || item.kind === 'dwarf' || item.kind === 'candidate')
 export const MOON_DESTINATIONS = SOLAR_BODIES.filter((item) => item.kind === 'moon')
+export const MINOR_DESTINATIONS = MINOR_BODIES
+/** Every selectable solar object, including the generated minor-body belt. */
+export const ALL_SOLAR_BODIES = [...SOLAR_BODIES, ...MINOR_BODIES]
+export const SOLAR_BODY_MAP = new Map(ALL_SOLAR_BODIES.map((item) => [item.id, item]))
+
+const CLASS_LABELS: Partial<Record<BodyKind, string>> = {
+  candidate: 'DWARF-PLANET CANDIDATE',
+  asteroid: 'ASTEROID',
+  trojan: 'JUPITER TROJAN',
+  tno: 'TRANS-NEPTUNIAN',
+  nea: 'NEAR-EARTH ASTEROID',
+  comet: 'COMET',
+}
 export function bodyDisplayClass(body: SolarBody): string {
-  if (body.kind === 'candidate') return 'DWARF-PLANET CANDIDATE'
-  return body.kind.toUpperCase()
+  return CLASS_LABELS[body.kind] ?? body.kind.toUpperCase()
 }
 export const AU_KM = 149_597_870.7
 export const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0)

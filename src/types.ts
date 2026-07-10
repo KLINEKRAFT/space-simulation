@@ -28,6 +28,8 @@ export interface SharedSimulationState {
   timeScale: number
   timePaused: boolean
   labelsVisible: boolean
+  orbitsVisible: boolean
+  minorBodiesVisible: boolean
   simResetToken: number
   bezelPixels: number
   away: AwayState
@@ -51,6 +53,8 @@ export function createInitialState(sessionId: string): SharedSimulationState {
     timeScale: 1,
     timePaused: false,
     labelsVisible: true,
+    orbitsVisible: true,
+    minorBodiesVisible: true,
     simResetToken: 0,
     bezelPixels: 0,
     away: {
