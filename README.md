@@ -4,17 +4,28 @@ A public, browser-based cinematic space explorer designed for one display or a s
 
 ## Current capabilities
 
-- Solar System scene with the Sun, eight planets, major dwarf planets and candidates, and a broad named-moon catalog
-- NASA texture loading with deterministic procedural fallbacks
-- atmospheric rims, cloud layers, planetary rings, ACES tone mapping, and bloom
-- Milky Way scene populated from confirmed NASA Exoplanet Archive host systems
-- visitable procedural reconstructions of loaded exoplanet systems
-- Sagittarius A* approximation with an accretion disk and photon-ring treatment
-- cinematic camera and manual free flight
-- synchronized left/right browser windows, fullscreen controls, and bezel correction
-- synchronized **Out of the office** display mode
-- installable PWA and Vercel configuration
-- scheduled NASA/JPL catalog refresh workflow
+### Rendering
+- Photoreal Earth in the EarthVR tradition: NASA 4K day/night imagery blended along a live terminator, city lights on the night side, ocean sun-glint, drifting cloud cover with ground shadows, and sun-aware atmospheric scattering (blue day limb, warm twilight ring)
+- Sun with domain-warped granulation, limb darkening, chromosphere rim, and procedural corona streamers
+- Saturn-class ring systems with radial ringlet profiles, the Cassini division, and an analytic planet shadow across the ring plane
+- Sagittarius A* with a doppler-beamed accretion disk, view-facing gravitational-lensing arcs, and a photon ring
+- Exoplanet host stars rendered with the granulation shader, tinted by stellar temperature
+- Shader-based twinkling starfield with soft round sprites, plus a procedural Milky Way sky dome
+- NASA texture streaming with deterministic fBM procedural fallbacks (banded gas giants, cratered rocky worlds, ice-crack moons)
+- ACES tone mapping, threshold bloom, and FXAA
+
+### Interaction
+- Click any body in the scene to target it; eased cinematic fly-to on every selection
+- Distance-faded floating body labels
+- Time deck: pause/resume (`Space`), rate presets from real-time to a year per second, live simulated-epoch readout, and a `NOW` reset
+- Cinematic camera and manual free flight
+- Full solar catalog (Sun, planets, dwarf planets, candidates, named moons) plus confirmed NASA Exoplanet Archive host systems with fly-in schematic views
+
+### Platform
+- Synchronized left/right browser windows, fullscreen controls, and bezel correction
+- Synchronized **Out of the office** display mode
+- Installable PWA (network-first navigations so deploys land immediately) and Vercel configuration
+- Scheduled NASA/JPL catalog refresh workflow
 
 ## Run locally
 
@@ -23,7 +34,7 @@ npm install
 npm run dev
 ```
 
-Open the displayed URL, select **Launch Second Display**, move the follower window to the right monitor in Firefox, and enter fullscreen in each window.
+Open the displayed URL, select **Second Display**, move the follower window to the right monitor in Firefox, and enter fullscreen in each window.
 
 ## Validate
 
@@ -35,10 +46,12 @@ The feature branch currently passes its GitHub Actions install, unit-test, TypeS
 
 ## Controls
 
+- Click a planet, moon, or star: set it as the active target
 - Drag / scroll: orbit and zoom in free-flight mode
 - `W A S D`: move
 - `Q / E`: vertical movement
 - `Shift`: boost
+- `Space`: pause / resume simulation time
 - `Control + Shift + O`: settings and away mode
 - `Control + Shift + K`: object catalog
 

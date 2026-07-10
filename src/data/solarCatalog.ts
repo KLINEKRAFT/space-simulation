@@ -26,6 +26,32 @@ export interface SolarBody {
   color: string
   atmosphereColor?: string
   rings?: RingDefinition
+  blurb?: string
+}
+
+export const BODY_BLURBS: Record<string, string> = {
+  sun: 'A G-type main-sequence star holding 99.86% of the system’s mass. Its churning photosphere sits at 5,772 K.',
+  mercury: 'The smallest planet — a cratered world of temperature extremes, swinging 600 °C between day and night.',
+  venus: 'A runaway greenhouse wrapped in sulfuric-acid clouds. Its surface glows at 465 °C under crushing pressure.',
+  earth: 'The only known living world. Watch city lights trace the continents as the terminator sweeps across the Pacific.',
+  mars: 'The rust-red desert planet, home to Olympus Mons and the ancient river valleys targeted by sample-return missions.',
+  jupiter: 'A gas giant with 2.5× the mass of every other planet combined. The Great Red Spot has raged for centuries.',
+  saturn: 'Ringed in ice and rubble spanning 280,000 km yet averaging just 10 m thick — the jewel of the system.',
+  uranus: 'An ice giant rolled onto its side, orbiting the Sun at a 98° tilt with rings almost perpendicular to its path.',
+  neptune: 'The windiest world known: supersonic methane jet streams top 2,000 km/h across its deep-blue clouds.',
+  ceres: 'The largest object in the asteroid belt, with bright salt flats gleaming inside Occator crater.',
+  pluto: 'A geologically alive dwarf planet with nitrogen glaciers flowing across its heart-shaped Sputnik Planitia.',
+  moon: 'Earth’s companion, locked in synchronous rotation — the same ancient face always turned toward us.',
+  io: 'The most volcanically active body in the solar system, resurfaced continuously by tidal heating.',
+  europa: 'A cracked ice shell over a saltwater ocean holding twice the water of all Earth’s seas.',
+  ganymede: 'The largest moon anywhere — bigger than Mercury — and the only one with its own magnetic field.',
+  titan: 'A hazy orange world with methane rain, rivers, and seas: the only moon with a dense atmosphere.',
+  enceladus: 'Geysers at its south pole vent ocean water into space, feeding Saturn’s E ring.',
+  triton: 'Neptune’s captured Kuiper Belt object, orbiting backwards with nitrogen geysers on a frozen surface.',
+  haumea: 'A dwarf planet spun into an egg shape by its 4-hour day, with its own ring and two moons.',
+  makemake: 'A bright, methane-frosted dwarf planet in the classical Kuiper Belt.',
+  eris: 'The most massive dwarf planet — its discovery triggered the redefinition that reclassified Pluto.',
+  sedna: 'A distant red world on an 11,400-year orbit reaching deep toward the inner Oort cloud.',
 }
 
 const body = (definition: SolarBody): SolarBody => definition

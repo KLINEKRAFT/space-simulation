@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { loadExoplanetSystems, type ExoplanetSystem } from './data/exoplanets'
 import {
+  BODY_BLURBS,
+  DAY_MS,
+  J2000_MS,
   MOON_DESTINATIONS,
   PRIMARY_DESTINATIONS,
   SOLAR_BODY_MAP,
@@ -54,19 +57,28 @@ function useExoplanetCatalog(): { systems: ExoplanetSystem[]; source: string; lo
 function roleLabel(role: DisplayRole): string {
   if (role === 'left') return 'DISPLAY 01 · LEFT'
   if (role === 'right') return 'DISPLAY 02 · RIGHT'
-  return 'DISPLAY 01 · SINGLE'
-}
-
-function qualityLabel(quality: QualityPreset): string {
-  if (quality === 'quality') return 'QUALITY'
-  if (quality === 'performance') return 'PERFORMANCE'
-  return 'BALANCED'
+  return 'DISPLAY 01'
 }
 
 function sceneLabel(sceneMode: SceneMode): string {
-  if (sceneMode === 'galaxy') return 'MILKY WAY / EXOPLANETS'
-  if (sceneMode === 'sagittarius') return 'SAGITTARIUS A*'
-  return 'SOLAR SYSTEM'
+  if (sceneMode === 'galaxy') return 'MILKY WAY · EXOPLANET SURVEY'
+  if (sceneMode === 'sagittarius') return 'SAGITTARIUS A* · GALACTIC CORE'
+  return 'SOLAR SYSTEM · LIVE ORRERY'
+}
+
+const TIME_PRESETS: Array<{ label: string; value: number }> = [
+  { label: 'REAL', value: 1 / 86_400 },
+  { label: '1 HR/S', value: 1 / 24 },
+  { label: '1 DAY/S', value: 1 },
+  { label: '1 MO/S', value: 30.44 },
+  { label: '1 YR/S', value: 365.25 },
+]
+
+function formatSimDate(simDays: number): string {
+  const date = new Date(J2000_MS + simDays * DAY_MS)
+  const day = date.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: '2-digit' })
+  const time = date.toLocaleTimeString('en-US', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' })
+  return `${day.toUpperCase()} · ${time} UTC`
 }
 
 function bodyFacts(body: SolarBody): Array<[string, string]> {
@@ -91,14 +103,33 @@ function systemFacts(system: ExoplanetSystem): Array<[string, string]> {
   ]
 }
 
+function targetBlurb(sceneMode: SceneMode, body?: SolarBody, system?: ExoplanetSystem): string {
+  if (sceneMode === 'sagittarius') {
+    return 'The supermassive black hole at the center of the Milky Way, imaged by the Event Horizon Telescope in 2022. Its accretion disk is rendered with relativistic doppler beaming.'
+  }
+  if (body) {
+    return BODY_BLURBS[body.id]
+      ?? (body.kind === 'moon'
+        ? `A natural satellite of ${SOLAR_BODY_MAP.get(body.parentId ?? '')?.name ?? 'its primary'}, rendered from measured orbital elements.`
+        : 'A distant world of the outer solar system, rendered from its published orbital elements.')
+  }
+  if (system) {
+    return `A confirmed planetary system from the NASA Exoplanet Archive. Select it to fly to a schematic view of its ${system.planets.length === 1 ? 'planet' : `${system.planets.length} planets`}.`
+  }
+  return ''
+}
+
 export default function App() {
   const [role, setRole] = useState<DisplayRole>(() => getDisplayRole())
   const [state, setState] = useState<SharedSimulationState>(() => createInitialState(getOrCreateSessionId()))
   const [panelOpen, setPanelOpen] = useState(false)
-  const [catalogOpen, setCatalogOpen] = useState(true)
+  const [catalogOpen, setCatalogOpen] = useState(() => window.innerWidth > 760)
   const [search, setSearch] = useState('')
   const [fps, setFps] = useState(0)
   const [notice, setNotice] = useState('')
+  const [simDays, setSimDays] = useState(() => (Date.now() - J2000_MS) / DAY_MS)
+  const [booted, setBooted] = useState(false)
+  const [splashGone, setSplashGone] = useState(false)
   const now = useClock()
   const exoplanets = useExoplanetCatalog()
   const isController = role !== 'right'
@@ -113,20 +144,10 @@ export default function App() {
   }, [role])
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.shiftKey && event.code === 'KeyO' && isController) {
-        event.preventDefault()
-        setPanelOpen((open) => !open)
-      }
-      if (event.ctrlKey && event.shiftKey && event.code === 'KeyK' && isController) {
-        event.preventDefault()
-        setCatalogOpen((open) => !open)
-      }
-      if (event.code === 'Escape') setPanelOpen(false)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isController])
+    if (!booted || splashGone) return
+    const timer = window.setTimeout(() => setSplashGone(true), 900)
+    return () => window.clearTimeout(timer)
+  }, [booted, splashGone])
 
   const updateState = useCallback(
     (updater: (current: SharedSimulationState) => SharedSimulationState) => {
@@ -139,6 +160,28 @@ export default function App() {
     [isController],
   )
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const typing = target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyO' && isController) {
+        event.preventDefault()
+        setPanelOpen((open) => !open)
+      }
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyK' && isController) {
+        event.preventDefault()
+        setCatalogOpen((open) => !open)
+      }
+      if (event.code === 'Space' && isController && !typing) {
+        event.preventDefault()
+        updateState((current) => ({ ...current, timePaused: !current.timePaused }))
+      }
+      if (event.code === 'Escape') setPanelOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isController, updateState])
+
   const updateAway = useCallback((patch: Partial<AwayState>) => {
     updateState((current) => ({ ...current, away: { ...current.away, ...patch } }))
   }, [updateState])
@@ -147,10 +190,20 @@ export default function App() {
     updateState((current) => ({ ...current, camera }))
   }, [updateState])
 
+  const handleFps = useCallback((value: number) => {
+    setFps(value)
+    if (value > 0) setBooted(true)
+  }, [])
+
   const setNavigationMode = (navigationMode: NavigationMode) => updateState((current) => ({ ...current, navigationMode }))
   const setQuality = (quality: QualityPreset) => updateState((current) => ({ ...current, quality }))
   const setScaleMode = (scaleMode: ScaleMode) => updateState((current) => ({ ...current, scaleMode }))
-  const selectTarget = (selectedTargetId: string) => updateState((current) => ({ ...current, selectedTargetId }))
+  const setTimeScale = (timeScale: number) => updateState((current) => ({ ...current, timeScale, timePaused: false }))
+  const toggleTimePaused = () => updateState((current) => ({ ...current, timePaused: !current.timePaused }))
+  const resetSimTime = () => updateState((current) => ({ ...current, simResetToken: current.simResetToken + 1 }))
+  const selectTarget = useCallback((selectedTargetId: string) => {
+    updateState((current) => ({ ...current, selectedTargetId }))
+  }, [updateState])
 
   const setSceneMode = (sceneMode: SceneMode) => {
     const fallbackTarget = sceneMode === 'solar'
@@ -218,8 +271,9 @@ export default function App() {
 
   const normalizedSearch = search.trim().toLowerCase()
   const solarResults = useMemo(() => {
-    const all = [...PRIMARY_DESTINATIONS, ...MOON_DESTINATIONS]
-    if (!normalizedSearch) return all.slice(0, 38)
+    const sun = SOLAR_BODY_MAP.get('sun')
+    const all = [...(sun ? [sun] : []), ...PRIMARY_DESTINATIONS, ...MOON_DESTINATIONS]
+    if (!normalizedSearch) return all.slice(0, 39)
     return all.filter((body) => body.name.toLowerCase().includes(normalizedSearch)).slice(0, 80)
   }, [normalizedSearch])
   const galaxyResults = useMemo(() => {
@@ -249,6 +303,11 @@ export default function App() {
       : selectedSystem
         ? systemFacts(selectedSystem)
         : []
+  const blurb = targetBlurb(state.sceneMode, selectedBody, selectedSystem)
+
+  const activePreset = TIME_PRESETS.reduce((closest, preset) =>
+    Math.abs(Math.log(preset.value / state.timeScale)) < Math.abs(Math.log(closest.value / state.timeScale)) ? preset : closest,
+  TIME_PRESETS[0])
 
   return (
     <main className={`app ${state.away.active && state.away.dimScene ? 'is-dimmed' : ''}`}>
@@ -260,27 +319,41 @@ export default function App() {
         scaleMode={state.scaleMode}
         selectedTargetId={state.selectedTargetId}
         timeScale={state.timeScale}
+        timePaused={state.timePaused}
+        labelsVisible={state.labelsVisible}
+        simResetToken={state.simResetToken}
         bezelPixels={state.bezelPixels}
         cameraPose={state.camera}
         isController={isController}
         paused={state.away.active}
         exoplanetSystems={exoplanets.systems}
         onCameraPose={updateCamera}
-        onFps={setFps}
+        onFps={handleFps}
+        onSimDays={setSimDays}
+        onSelectTarget={selectTarget}
       />
+
+      {!splashGone ? (
+        <div className={`boot-splash ${booted ? 'is-done' : ''}`} aria-hidden={booted}>
+          <div className="boot-orbit"><span /><span /><span /></div>
+          <strong>SPACE SIMULATION</strong>
+          <p>{booted ? 'TELEMETRY LOCKED' : 'INITIALIZING ORBITAL MECHANICS'}</p>
+        </div>
+      ) : null}
 
       <header className="instrument-bar">
         <div className="instrument-identity">
           <span className="instrument-mark" aria-hidden="true" />
           <div>
             <strong>SPACE SIMULATION</strong>
-            <span>{sceneLabel(state.sceneMode)} · RESEARCH BUILD 02</span>
+            <span>{sceneLabel(state.sceneMode)}</span>
           </div>
         </div>
         <div className="instrument-readouts">
           <span>{roleLabel(role)}</span>
-          <span>{qualityLabel(state.quality)}</span>
+          <span className="readout-divider" aria-hidden="true" />
           <span>{fps || '—'} FPS</span>
+          <span className="readout-divider" aria-hidden="true" />
           <span>{utcTime} UTC</span>
         </div>
       </header>
@@ -288,12 +361,14 @@ export default function App() {
       {isController ? (
         <>
           <nav className="scene-switcher" aria-label="Simulation regions">
-            <button type="button" className={state.sceneMode === 'solar' ? 'is-active' : ''} onClick={() => setSceneMode('solar')}>SOLAR</button>
+            <button type="button" className={state.sceneMode === 'solar' ? 'is-active' : ''} onClick={() => setSceneMode('solar')}>SOLAR SYSTEM</button>
             <button type="button" className={state.sceneMode === 'galaxy' ? 'is-active' : ''} onClick={() => setSceneMode('galaxy')}>MILKY WAY</button>
             <button type="button" className={state.sceneMode === 'sagittarius' ? 'is-active' : ''} onClick={() => setSceneMode('sagittarius')}>SGR A*</button>
           </nav>
 
-          <button type="button" className={`catalog-toggle ${catalogOpen ? 'is-open' : ''}`} onClick={() => setCatalogOpen((open) => !open)}>CATALOG</button>
+          <button type="button" className={`catalog-toggle ${catalogOpen ? 'is-open' : ''}`} onClick={() => setCatalogOpen((open) => !open)}>
+            <span className="catalog-toggle-icon" aria-hidden="true" />CATALOG
+          </button>
 
           {catalogOpen && state.sceneMode !== 'sagittarius' ? (
             <aside className="catalog-panel">
@@ -305,19 +380,21 @@ export default function App() {
                     ? 'LOADING NASA ARCHIVE'
                     : `${exoplanets.systems.length.toLocaleString()} SYSTEMS`}</small>
               </div>
-              <input className="catalog-search" type="search" placeholder="Search destination" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <input className="catalog-search" type="search" placeholder="Search destinations…" value={search} onChange={(event) => setSearch(event.target.value)} />
               <div className="catalog-results">
                 {state.sceneMode === 'solar'
                   ? solarResults.map((body) => (
                       <button type="button" key={body.id} className={state.selectedTargetId === body.id ? 'is-active' : ''} onClick={() => selectTarget(body.id)}>
+                        <span className={`body-dot dot-${body.kind}`} aria-hidden="true" />
                         <span><strong>{body.name}</strong><small>{bodyDisplayClass(body)}</small></span>
-                        <span>{body.parentId ? SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() : ''}</span>
+                        <span className="result-meta">{body.parentId && body.kind === 'moon' ? SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() : body.semiMajorAxisAu ? `${body.semiMajorAxisAu} AU` : ''}</span>
                       </button>
                     ))
                   : galaxyResults.map((system) => (
                       <button type="button" key={system.id} className={state.selectedTargetId === system.id ? 'is-active' : ''} onClick={() => selectTarget(system.id)}>
+                        <span className="body-dot dot-star" aria-hidden="true" />
                         <span><strong>{system.hostname}</strong><small>{system.planets.length} PLANET{system.planets.length === 1 ? '' : 'S'}</small></span>
-                        <span>{system.distancePc ? `${system.distancePc.toFixed(1)} PC` : ''}</span>
+                        <span className="result-meta">{system.distancePc ? `${system.distancePc.toFixed(1)} PC` : ''}</span>
                       </button>
                     ))}
               </div>
@@ -325,8 +402,9 @@ export default function App() {
           ) : null}
 
           <section className="target-panel">
-            <span>ACTIVE TARGET</span>
+            <span className="panel-kicker">ACTIVE TARGET</span>
             <h2>{selectedTitle}</h2>
+            {blurb ? <p className="target-blurb">{blurb}</p> : null}
             <div className="target-facts">
               {selectedFacts.map(([label, value]) => (
                 <div key={label}><small>{label}</small><strong>{value}</strong></div>
@@ -339,15 +417,39 @@ export default function App() {
             ) : null}
           </section>
 
-          <nav className="control-rail" aria-label="Simulation controls">
-            <button type="button" className={state.navigationMode === 'cinematic' ? 'is-active' : ''} onClick={() => setNavigationMode('cinematic')}>CINEMATIC</button>
-            <button type="button" className={state.navigationMode === 'free' ? 'is-active' : ''} onClick={() => setNavigationMode('free')}>FREE FLIGHT</button>
-            {role === 'single'
-              ? <button type="button" onClick={launchSecondDisplay}>LAUNCH SECOND DISPLAY</button>
-              : <button type="button" onClick={restoreSingleDisplay}>SINGLE DISPLAY</button>}
-            <button type="button" onClick={enterFullscreen}>FULLSCREEN</button>
-            <button type="button" onClick={() => setPanelOpen(true)}>AWAY / SETTINGS</button>
-          </nav>
+          <div className="command-deck">
+            <div className="time-deck" aria-label="Simulation time controls">
+              <button type="button" className="play-toggle" onClick={toggleTimePaused} aria-label={state.timePaused ? 'Resume time' : 'Pause time'}>
+                {state.timePaused
+                  ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor" /></svg>
+                  : <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z" fill="currentColor" /></svg>}
+              </button>
+              <div className="time-presets">
+                {TIME_PRESETS.map((preset) => (
+                  <button
+                    type="button"
+                    key={preset.label}
+                    className={!state.timePaused && activePreset.label === preset.label ? 'is-active' : ''}
+                    onClick={() => setTimeScale(preset.value)}
+                  >{preset.label}</button>
+                ))}
+              </div>
+              <div className="sim-date">
+                <small>{state.timePaused ? 'TIME HELD' : 'SIM EPOCH'}</small>
+                <span>{formatSimDate(simDays)}</span>
+              </div>
+              <button type="button" className="now-button" onClick={resetSimTime}>NOW</button>
+            </div>
+            <nav className="control-rail" aria-label="Simulation controls">
+              <button type="button" className={state.navigationMode === 'cinematic' ? 'is-active' : ''} onClick={() => setNavigationMode('cinematic')}>CINEMATIC</button>
+              <button type="button" className={state.navigationMode === 'free' ? 'is-active' : ''} onClick={() => setNavigationMode('free')}>FREE FLIGHT</button>
+              {role === 'single'
+                ? <button type="button" onClick={launchSecondDisplay}>SECOND DISPLAY</button>
+                : <button type="button" onClick={restoreSingleDisplay}>SINGLE DISPLAY</button>}
+              <button type="button" onClick={enterFullscreen}>FULLSCREEN</button>
+              <button type="button" onClick={() => setPanelOpen(true)}>SETTINGS</button>
+            </nav>
+          </div>
         </>
       ) : (
         <nav className="control-rail follower-controls" aria-label="Display controls">
@@ -356,7 +458,7 @@ export default function App() {
       )}
 
       {state.navigationMode === 'free' && isController && !state.away.active
-        ? <div className="flight-help">DRAG TO LOOK · SCROLL TO ZOOM · W A S D MOVE · Q / E VERTICAL · SHIFT BOOST</div>
+        ? <div className="flight-help">DRAG TO LOOK · SCROLL TO ZOOM · W A S D MOVE · Q / E VERTICAL · SHIFT BOOST · CLICK A BODY TO TARGET IT</div>
         : null}
       {notice ? <button type="button" className="notice" onClick={() => setNotice('')}>{notice}</button> : null}
 
@@ -375,9 +477,22 @@ export default function App() {
         <div className="panel-backdrop" onMouseDown={() => setPanelOpen(false)}>
           <aside className="settings-panel" onMouseDown={(event) => event.stopPropagation()}>
             <div className="panel-heading">
-              <div><span>DISPLAY CONTROL</span><h2>Away mode &amp; simulation calibration</h2></div>
+              <div><span>DISPLAY CONTROL</span><h2>Simulation settings</h2></div>
               <button type="button" className="icon-button" onClick={() => setPanelOpen(false)}>CLOSE</button>
             </div>
+            <div className="two-column-fields">
+              <label className="field-row"><span>RENDER QUALITY</span><select value={state.quality} onChange={(event) => setQuality(event.target.value as QualityPreset)}><option value="performance">Performance</option><option value="balanced">Balanced</option><option value="quality">Quality</option></select></label>
+              <label className="field-row"><span>SOLAR SCALE</span><select value={state.scaleMode} onChange={(event) => setScaleMode(event.target.value as ScaleMode)}><option value="cinematic">Cinematic compression</option><option value="scientific">Orbital-proportion mode</option></select></label>
+            </div>
+            <label className="toggle-row">
+              <span><strong>BODY LABELS</strong><small>Floating designations above planets and moons.</small></span>
+              <input type="checkbox" checked={state.labelsVisible} onChange={(event) => updateState((current) => ({ ...current, labelsVisible: event.target.checked }))} />
+            </label>
+            <label className="field-row">
+              <span>BEZEL CORRECTION · {state.bezelPixels} PX</span>
+              <input type="range" min="0" max="240" step="2" value={state.bezelPixels} onChange={(event) => updateState((current) => ({ ...current, bezelPixels: Number(event.target.value) }))} />
+            </label>
+            <div className="settings-divider"><span>AWAY MODE</span></div>
             <label className="toggle-row">
               <span><strong>AWAY MODE</strong><small>Synchronizes across both display windows.</small></span>
               <input type="checkbox" checked={state.away.active} onChange={(event) => updateAway({ active: event.target.checked })} />
@@ -388,32 +503,20 @@ export default function App() {
               <label className="toggle-row compact"><span>SHOW CLOCK</span><input type="checkbox" checked={state.away.showClock} onChange={(event) => updateAway({ showClock: event.target.checked })} /></label>
               <label className="toggle-row compact"><span>DIM SCENE</span><input type="checkbox" checked={state.away.dimScene} onChange={(event) => updateAway({ dimScene: event.target.checked })} /></label>
             </div>
-            <div className="two-column-fields">
-              <label className="field-row"><span>RENDER QUALITY</span><select value={state.quality} onChange={(event) => setQuality(event.target.value as QualityPreset)}><option value="performance">Performance</option><option value="balanced">Balanced</option><option value="quality">Quality</option></select></label>
-              <label className="field-row"><span>SOLAR SCALE</span><select value={state.scaleMode} onChange={(event) => setScaleMode(event.target.value as ScaleMode)}><option value="cinematic">Cinematic compression</option><option value="scientific">Orbital-proportion mode</option></select></label>
-            </div>
-            <label className="field-row">
-              <span>TIME RATE · {state.timeScale.toLocaleString()} SIMULATION DAYS / SECOND</span>
-              <input type="range" min="0" max="120" step="1" value={state.timeScale} onChange={(event) => updateState((current) => ({ ...current, timeScale: Number(event.target.value) }))} />
-            </label>
-            <label className="field-row">
-              <span>BEZEL CORRECTION · {state.bezelPixels} PX</span>
-              <input type="range" min="0" max="240" step="2" value={state.bezelPixels} onChange={(event) => updateState((current) => ({ ...current, bezelPixels: Number(event.target.value) }))} />
-            </label>
-            <div className="panel-note"><strong>VISUAL ACCURACY</strong><p>NASA texture maps are used when available. Planetary sizes are enhanced for visibility; orbital mode preserves relative orbital spacing more closely.</p></div>
+            <div className="panel-note"><strong>VISUAL REALISM</strong><p>Earth renders with NASA 4K day/night imagery, live terminator city lights, ocean sun-glint, and drifting cloud shadows. Other worlds stream NASA maps with procedural fallbacks.</p></div>
+            <div className="panel-note"><strong>SHORTCUTS</strong><p>Space pauses time · Ctrl+Shift+O settings · Ctrl+Shift+K catalog · Click any body to target it.</p></div>
             <div className="panel-note"><strong>FIREFOX WORKFLOW</strong><p>Open the second display, move it to the right monitor, then select fullscreen in each window.</p></div>
-            <div className="panel-note"><strong>KEYBOARD SHORTCUTS</strong><p>Control + Shift + O opens settings. Control + Shift + K toggles the catalog.</p></div>
           </aside>
         </div>
       ) : null}
 
       <footer className="data-footer">
         <span>{state.sceneMode === 'solar'
-          ? 'POSITIONS · KEPLERIAN J2000 APPROXIMATION · JPL SNAPSHOT PIPELINE INCLUDED'
+          ? 'POSITIONS · KEPLERIAN J2000 APPROXIMATION'
           : state.sceneMode === 'galaxy'
             ? exoplanets.source
             : 'SAGITTARIUS A* · CINEMATIC RELATIVISTIC APPROXIMATION'}</span>
-        <span>TEXTURES · NASA 3D RESOURCES + PROCEDURAL FALLBACKS</span>
+        <span>IMAGERY · NASA VISIBLE EARTH + 3D RESOURCES</span>
       </footer>
     </main>
   )

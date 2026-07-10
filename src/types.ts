@@ -26,6 +26,9 @@ export interface SharedSimulationState {
   scaleMode: ScaleMode
   selectedTargetId: string
   timeScale: number
+  timePaused: boolean
+  labelsVisible: boolean
+  simResetToken: number
   bezelPixels: number
   away: AwayState
   camera: CameraPose
@@ -46,6 +49,9 @@ export function createInitialState(sessionId: string): SharedSimulationState {
     scaleMode: 'cinematic',
     selectedTargetId: 'earth',
     timeScale: 1,
+    timePaused: false,
+    labelsVisible: true,
+    simResetToken: 0,
     bezelPixels: 0,
     away: {
       active: false,
