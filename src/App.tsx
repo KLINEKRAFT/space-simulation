@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { loadExoplanetSystems, type ExoplanetSystem } from './data/exoplanets'
 import {
+  BODY_BLURBS,
+  DAY_MS,
+  J2000_MS,
+  MINOR_DESTINATIONS,
   MOON_DESTINATIONS,
   PRIMARY_DESTINATIONS,
+  SOLAR_BODIES,
   SOLAR_BODY_MAP,
+  SPACECRAFT_DESTINATIONS,
   bodyDisplayClass,
+  type BodyKind,
   type SolarBody,
 } from './data/solarCatalog'
-import { SpaceCanvas } from './space/SpaceCanvas'
 import { useDisplaySync } from './sync/useDisplaySync'
 import type {
   AwayState,
@@ -21,7 +27,10 @@ import type {
 } from './types'
 import { createInitialState } from './types'
 import { buildDisplayUrl, getDisplayRole, getOrCreateSessionId } from './utils/display'
-import { formatTimeRate, TIME_RATE_PRESETS } from './utils/simulationTime'
+
+// Code-split the WebGL canvas (three.js + all shaders) into its own chunk so
+// the initial HTML/JS paints the boot splash immediately while it streams.
+const SpaceCanvas = lazy(() => import('./space/SpaceCanvas').then((module) => ({ default: module.SpaceCanvas })))
 
 function useClock(): Date {
   const [now, setNow] = useState(() => new Date())
@@ -36,7 +45,6 @@ function useExoplanetCatalog(): { systems: ExoplanetSystem[]; source: string; lo
   const [systems, setSystems] = useState<ExoplanetSystem[]>([])
   const [source, setSource] = useState('NASA EXOPLANET ARCHIVE · CONNECTING')
   const [loading, setLoading] = useState(true)
-
   useEffect(() => {
     let active = true
     loadExoplanetSystems()
@@ -48,43 +56,97 @@ function useExoplanetCatalog(): { systems: ExoplanetSystem[]; source: string; lo
       .finally(() => {
         if (active) setLoading(false)
       })
-    return () => {
-      active = false
-    }
+    return () => { active = false }
   }, [])
-
   return { systems, source, loading }
 }
 
 function roleLabel(role: DisplayRole): string {
   if (role === 'left') return 'DISPLAY 01 · LEFT'
   if (role === 'right') return 'DISPLAY 02 · RIGHT'
-  return 'DISPLAY 01 · SINGLE'
-}
-
-function qualityLabel(quality: QualityPreset): string {
-  if (quality === 'quality') return 'QUALITY'
-  if (quality === 'performance') return 'PERFORMANCE'
-  return 'BALANCED'
+  return 'DISPLAY 01'
 }
 
 function sceneLabel(sceneMode: SceneMode): string {
-  if (sceneMode === 'galaxy') return 'MILKY WAY / EXOPLANETS'
-  if (sceneMode === 'sagittarius') return 'SAGITTARIUS A*'
-  return 'SOLAR SYSTEM'
+  if (sceneMode === 'galaxy') return 'MILKY WAY · EXOPLANET SURVEY'
+  if (sceneMode === 'sagittarius') return 'SAGITTARIUS A* · GALACTIC CORE'
+  return 'SOLAR SYSTEM · LIVE ORRERY'
 }
 
+const TIME_PRESETS: Array<{ label: string; value: number }> = [
+  { label: 'REAL', value: 1 / 86_400 },
+  { label: '1 HR/S', value: 1 / 24 },
+  { label: '1 DAY/S', value: 1 },
+  { label: '1 MO/S', value: 30.44 },
+  { label: '1 YR/S', value: 365.25 },
+]
+
+type CatalogFilter = 'all' | 'planet' | 'moon' | 'asteroid' | 'trojan' | 'tno' | 'nea' | 'comet' | 'spacecraft'
+const CATALOG_FILTERS: Array<{ key: CatalogFilter; label: string }> = [
+  { key: 'all', label: 'ALL' },
+  { key: 'planet', label: 'PLANETS' },
+  { key: 'moon', label: 'MOONS' },
+  { key: 'asteroid', label: 'ASTEROIDS' },
+  { key: 'trojan', label: 'TROJANS' },
+  { key: 'tno', label: 'TNOs' },
+  { key: 'nea', label: 'NEAs' },
+  { key: 'comet', label: 'COMETS' },
+  { key: 'spacecraft', label: 'CRAFT' },
+]
+function catalogGroup(kind: BodyKind): CatalogFilter {
+  if (kind === 'star' || kind === 'planet' || kind === 'dwarf' || kind === 'candidate') return 'planet'
+  return kind as CatalogFilter
+}
+
+const TOUR_STOPS: Array<{ scene: SceneMode; target: string; caption: string }> = [
+  { scene: 'solar', target: 'sun', caption: 'Our star — a G-type dwarf holding 99.86% of the system’s mass.' },
+  { scene: 'solar', target: 'earth', caption: 'Earth at night: city lights trace the terminator as it sweeps west.' },
+  { scene: 'solar', target: 'mars', caption: 'Mars — the rust-red desert world and target of sample-return missions.' },
+  { scene: 'solar', target: 'sc:iss', caption: 'The ISS, circling Earth every 93 minutes.' },
+  { scene: 'solar', target: 'jupiter', caption: 'Jupiter — a gas giant more massive than all other planets combined.' },
+  { scene: 'solar', target: 'saturn', caption: 'Saturn, wrapped in 280,000 km of ice and rubble.' },
+  { scene: 'solar', target: 'mb:4-vesta', caption: 'Vesta — one of ~1,100 minor bodies you can visit in the belt.' },
+  { scene: 'solar', target: 'sc:voyager1', caption: 'Voyager 1 — the most distant human-made object, in interstellar space.' },
+  { scene: 'galaxy', target: '', caption: 'The Milky Way exoplanet survey, set against real constellations.' },
+  { scene: 'sagittarius', target: 'sagittarius-a', caption: 'Sagittarius A* — the four-million-solar-mass heart of our galaxy.' },
+]
+
+function formatSimDate(simDays: number): string {
+  const date = new Date(J2000_MS + simDays * DAY_MS)
+  const day = date.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: '2-digit' })
+  const time = date.toLocaleTimeString('en-US', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' })
+  return `${day.toUpperCase()} · ${time} UTC`
+}
+
+const SURFACE_GRAVITY: Record<string, number> = {
+  sun: 274, mercury: 3.7, venus: 8.87, earth: 9.81, mars: 3.72, jupiter: 24.79,
+  saturn: 10.44, uranus: 8.69, neptune: 11.15, pluto: 0.62, ceres: 0.27, eris: 0.82,
+  moon: 1.62, io: 1.80, europa: 1.31, ganymede: 1.43, callisto: 1.24, titan: 1.35,
+  triton: 0.78, charon: 0.29, enceladus: 0.11, mimas: 0.06, rhea: 0.26, dione: 0.23,
+}
+function formatDayLength(rotationPeriodDays?: number): string | undefined {
+  if (!rotationPeriodDays) return undefined
+  const hours = Math.abs(rotationPeriodDays) * 24
+  const retro = rotationPeriodDays < 0 ? ' (RETRO)' : ''
+  if (hours < 48) return `${hours.toFixed(1)} HRS${retro}`
+  return `${Math.abs(rotationPeriodDays).toFixed(2)} DAYS${retro}`
+}
 function bodyFacts(body: SolarBody): Array<[string, string]> {
-  const facts: Array<[string, string]> = [
-    ['CLASS', bodyDisplayClass(body)],
-    ['RADIUS', `${Math.round(body.radiusKm).toLocaleString()} KM`],
-  ]
+  const facts: Array<[string, string]> = [['CLASS', bodyDisplayClass(body)]]
+  if (body.kind !== 'spacecraft') {
+    facts.push(['RADIUS', `${Math.round(body.radiusKm).toLocaleString()} KM`])
+  }
+  if (body.kind !== 'star' && body.kind !== 'spacecraft' && body.radiusKm >= 100) {
+    facts.push(['SIZE', `${(body.radiusKm / 6371).toFixed(body.radiusKm > 3000 ? 2 : 3)} × EARTH`])
+  }
+  const gravity = SURFACE_GRAVITY[body.id]
+  if (gravity) facts.push(['GRAVITY', `${gravity} M/S² · ${(gravity / 9.81).toFixed(2)} g`])
+  const dayLength = formatDayLength(body.rotationPeriodDays)
+  if (dayLength && body.kind !== 'spacecraft') facts.push(['DAY', dayLength])
   if (body.semiMajorAxisAu) facts.push(['ORBIT', `${body.semiMajorAxisAu.toLocaleString()} AU`])
   if (body.orbitKm) facts.push(['ORBIT', `${Math.round(body.orbitKm).toLocaleString()} KM`])
   if (body.orbitalPeriodDays) facts.push(['PERIOD', `${Math.abs(body.orbitalPeriodDays).toLocaleString()} DAYS`])
-  if (body.parentId) {
-    facts.push(['PRIMARY', SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() ?? body.parentId.toUpperCase()])
-  }
+  if (body.parentId && body.kind === 'moon') facts.push(['PRIMARY', SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() ?? body.parentId.toUpperCase()])
   return facts
 }
 
@@ -98,20 +160,48 @@ function systemFacts(system: ExoplanetSystem): Array<[string, string]> {
   ]
 }
 
-function isTypingTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement
+const KIND_BLURBS: Partial<Record<BodyKind, string>> = {
+  asteroid: 'A main-belt asteroid — one of over a million rocky remnants orbiting between Mars and Jupiter.',
+  trojan: 'A Jupiter Trojan, shepherded 60° ahead of or behind the giant planet at a stable Lagrange point.',
+  tno: 'A trans-Neptunian object from the frozen Kuiper Belt beyond Neptune’s orbit.',
+  nea: 'A near-Earth asteroid whose orbit carries it into Earth’s neighbourhood.',
+  comet: 'A comet on a steeply eccentric orbit; near the Sun its ices sublimate into a glowing coma and tail.',
+}
+function targetBlurb(sceneMode: SceneMode, body?: SolarBody, system?: ExoplanetSystem): string {
+  if (sceneMode === 'sagittarius') {
+    return 'The supermassive black hole at the center of the Milky Way, imaged by the Event Horizon Telescope in 2022. Its accretion disk is rendered with relativistic doppler beaming.'
+  }
+  if (body) {
+    return body.blurb
+      ?? BODY_BLURBS[body.id]
+      ?? KIND_BLURBS[body.kind]
+      ?? (body.kind === 'moon'
+        ? `A natural satellite of ${SOLAR_BODY_MAP.get(body.parentId ?? '')?.name ?? 'its primary'}, rendered from measured orbital elements.`
+        : 'A distant world of the outer solar system, rendered from its published orbital elements.')
+  }
+  if (system) {
+    return `A confirmed planetary system from the NASA Exoplanet Archive. Select it to fly to a schematic view of its ${system.planets.length === 1 ? 'planet' : `${system.planets.length} planets`}.`
+  }
+  return ''
 }
 
 export default function App() {
   const [role, setRole] = useState<DisplayRole>(() => getDisplayRole())
   const [state, setState] = useState<SharedSimulationState>(() => createInitialState(getOrCreateSessionId()))
   const [panelOpen, setPanelOpen] = useState(false)
-  const [catalogOpen, setCatalogOpen] = useState(true)
-  const [targetOpen, setTargetOpen] = useState(true)
+  const [catalogOpen, setCatalogOpen] = useState(() => window.innerWidth > 760)
+  const [targetOpen, setTargetOpen] = useState(() => window.innerWidth > 1100)
+  const [deckVisible, setDeckVisible] = useState(true)
+  const [viewOpen, setViewOpen] = useState(false)
+  const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>('all')
+  const [tourIndex, setTourIndex] = useState(-1)
   const [hudVisible, setHudVisible] = useState(true)
   const [search, setSearch] = useState('')
   const [fps, setFps] = useState(0)
   const [notice, setNotice] = useState('')
+  const [simDays, setSimDays] = useState(() => (Date.now() - J2000_MS) / DAY_MS)
+  const [booted, setBooted] = useState(false)
+  const [splashGone, setSplashGone] = useState(false)
   const now = useClock()
   const exoplanets = useExoplanetCatalog()
   const isController = role !== 'right'
@@ -126,34 +216,10 @@ export default function App() {
   }, [role])
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code === 'Escape') {
-        setPanelOpen(false)
-        return
-      }
-      if (!isController || isTypingTarget(event.target)) return
-      if (event.code === 'KeyH' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault()
-        setHudVisible((visible) => !visible)
-      }
-      if (event.ctrlKey && event.shiftKey && event.code === 'KeyO') {
-        event.preventDefault()
-        setPanelOpen((open) => !open)
-      }
-      if (event.ctrlKey && event.shiftKey && event.code === 'KeyK') {
-        event.preventDefault()
-        setCatalogOpen((open) => !open)
-        setHudVisible(true)
-      }
-      if (event.ctrlKey && event.shiftKey && event.code === 'KeyI') {
-        event.preventDefault()
-        setTargetOpen((open) => !open)
-        setHudVisible(true)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isController])
+    if (!booted || splashGone) return
+    const timer = window.setTimeout(() => setSplashGone(true), 900)
+    return () => window.clearTimeout(timer)
+  }, [booted, splashGone])
 
   const updateState = useCallback(
     (updater: (current: SharedSimulationState) => SharedSimulationState) => {
@@ -166,6 +232,34 @@ export default function App() {
     [isController],
   )
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const typing = target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyO' && isController) {
+        event.preventDefault()
+        setPanelOpen((open) => !open)
+      }
+      if (!isController || typing || event.metaKey || event.ctrlKey || event.altKey) {
+        if (event.code === 'Escape') { setPanelOpen(false); setViewOpen(false) }
+        return
+      }
+      if (event.code === 'Space') {
+        event.preventDefault()
+        updateState((current) => ({ ...current, timePaused: !current.timePaused }))
+      }
+      if (event.code === 'KeyH') { event.preventDefault(); setHudVisible((visible) => !visible) }
+      if (event.code === 'KeyC') { event.preventDefault(); setCatalogOpen((open) => !open) }
+      if (event.code === 'KeyB') { event.preventDefault(); setDeckVisible((visible) => !visible) }
+      if (event.code === 'KeyV') { event.preventDefault(); setViewOpen((open) => !open) }
+      if (event.code === 'KeyO') { event.preventDefault(); updateState((current) => ({ ...current, orbitsVisible: !current.orbitsVisible })) }
+      if (event.code === 'KeyL') { event.preventDefault(); updateState((current) => ({ ...current, labelsVisible: !current.labelsVisible })) }
+      if (event.code === 'Escape') { setPanelOpen(false); setViewOpen(false) }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isController, updateState])
+
   const updateAway = useCallback((patch: Partial<AwayState>) => {
     updateState((current) => ({ ...current, away: { ...current.away, ...patch } }))
   }, [updateState])
@@ -174,12 +268,35 @@ export default function App() {
     updateState((current) => ({ ...current, camera }))
   }, [updateState])
 
-  const setNavigationMode = (navigationMode: NavigationMode) => updateState((current) => ({ ...current, navigationMode }))
+  const handleFps = useCallback((value: number) => {
+    setFps(value)
+    if (value > 0) setBooted(true)
+  }, [])
+
+  const setNavigationMode = (navigationMode: NavigationMode) => { stopTour(); updateState((current) => ({ ...current, navigationMode })) }
   const setQuality = (quality: QualityPreset) => updateState((current) => ({ ...current, quality }))
   const setScaleMode = (scaleMode: ScaleMode) => updateState((current) => ({ ...current, scaleMode }))
-  const selectTarget = (selectedTargetId: string) => updateState((current) => ({ ...current, selectedTargetId }))
+  const setTimeScale = (timeScale: number) => updateState((current) => ({ ...current, timeScale, timePaused: false }))
+  const toggleTimePaused = () => updateState((current) => ({ ...current, timePaused: !current.timePaused }))
+  const resetSimTime = () => updateState((current) => ({ ...current, simResetToken: current.simResetToken + 1 }))
+  const stopTour = useCallback(() => setTourIndex((index) => (index >= 0 ? -1 : index)), [])
+  const selectTarget = useCallback((selectedTargetId: string) => {
+    stopTour()
+    updateState((current) => ({ ...current, selectedTargetId }))
+    if (window.innerWidth > 1100) setTargetOpen(true)
+  }, [updateState, stopTour])
+  const toggleOrbits = () => updateState((current) => ({ ...current, orbitsVisible: !current.orbitsVisible }))
+  const toggleLabels = () => updateState((current) => ({ ...current, labelsVisible: !current.labelsVisible }))
+  const toggleBelt = () => updateState((current) => ({ ...current, minorBodiesVisible: !current.minorBodiesVisible }))
+  const toggleSpacecraft = () => updateState((current) => ({ ...current, spacecraftVisible: !current.spacecraftVisible }))
+  const toggleConstellations = () => updateState((current) => ({ ...current, constellationsVisible: !current.constellationsVisible }))
+  const fitSystem = () => {
+    stopTour()
+    updateState((current) => ({ ...current, navigationMode: 'free', fitToken: current.fitToken + 1 }))
+  }
 
   const setSceneMode = (sceneMode: SceneMode) => {
+    stopTour()
     const fallbackTarget = sceneMode === 'solar'
       ? 'earth'
       : sceneMode === 'galaxy'
@@ -187,7 +304,21 @@ export default function App() {
         : 'sagittarius-a'
     updateState((current) => ({ ...current, sceneMode, selectedTargetId: fallbackTarget }))
     setSearch('')
+    setCatalogFilter('all')
   }
+
+  // Guided tour: advance to the next highlight on a timer while active.
+  useEffect(() => {
+    if (tourIndex < 0 || !isController) return
+    const stop = TOUR_STOPS[tourIndex]
+    const target = stop.target || (stop.scene === 'galaxy'
+      ? exoplanets.systems[0]?.id ?? 'exo:proxima-centauri'
+      : stop.scene === 'sagittarius' ? 'sagittarius-a' : 'earth')
+    updateState((current) => ({ ...current, sceneMode: stop.scene, selectedTargetId: target, navigationMode: 'cinematic', timePaused: false }))
+    const timer = window.setTimeout(() => setTourIndex((index) => (index + 1) % TOUR_STOPS.length), 9000)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourIndex, isController])
 
   const launchSecondDisplay = async () => {
     if (!isController) return
@@ -239,16 +370,18 @@ export default function App() {
   const localTime = useMemo(() => now.toLocaleTimeString([], {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   }), [now])
-  const utcTime = useMemo(() => now.toLocaleTimeString('en-US', {
-    timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }), [now])
 
   const normalizedSearch = search.trim().toLowerCase()
+  const solarCatalog = useMemo(() => {
+    const sun = SOLAR_BODY_MAP.get('sun')
+    return [...(sun ? [sun] : []), ...PRIMARY_DESTINATIONS, ...MOON_DESTINATIONS, ...SPACECRAFT_DESTINATIONS, ...MINOR_DESTINATIONS]
+  }, [])
   const solarResults = useMemo(() => {
-    const all = [...PRIMARY_DESTINATIONS, ...MOON_DESTINATIONS]
-    if (!normalizedSearch) return all.slice(0, 38)
-    return all.filter((body) => body.name.toLowerCase().includes(normalizedSearch)).slice(0, 80)
-  }, [normalizedSearch])
+    let list = solarCatalog
+    if (catalogFilter !== 'all') list = list.filter((body) => catalogGroup(body.kind) === catalogFilter)
+    if (normalizedSearch) list = list.filter((body) => body.name.toLowerCase().includes(normalizedSearch))
+    return list.slice(0, 140)
+  }, [solarCatalog, catalogFilter, normalizedSearch])
   const galaxyResults = useMemo(() => {
     if (!normalizedSearch) return exoplanets.systems.slice(0, 36)
     return exoplanets.systems.filter((system) =>
@@ -269,22 +402,26 @@ export default function App() {
         ['CLASS', 'SUPERMASSIVE BLACK HOLE'],
         ['LOCATION', 'GALACTIC CENTER'],
         ['MASS', '≈ 4 MILLION SOLAR MASSES'],
-        ['VIEW', 'CINEMATIC APPROXIMATION'],
+        ['VIEW', 'SCIENTIFIC VISUALIZATION'],
       ]
     : selectedBody
       ? bodyFacts(selectedBody)
       : selectedSystem
         ? systemFacts(selectedSystem)
         : []
+  const blurb = targetBlurb(state.sceneMode, selectedBody, selectedSystem)
+  const selectedMoons = useMemo(
+    () => (selectedBody ? SOLAR_BODIES.filter((item) => item.parentId === selectedBody.id && item.kind === 'moon') : []),
+    [selectedBody],
+  )
 
-  const dataSource = state.sceneMode === 'solar'
-    ? 'KEPLERIAN J2000 · JPL SNAPSHOT PIPELINE'
-    : state.sceneMode === 'galaxy'
-      ? exoplanets.source
-      : 'SAGITTARIUS A* · CINEMATIC RELATIVISTIC APPROXIMATION'
+  const activePreset = TIME_PRESETS.reduce((closest, preset) =>
+    Math.abs(Math.log(preset.value / state.timeScale)) < Math.abs(Math.log(closest.value / state.timeScale)) ? preset : closest,
+  TIME_PRESETS[0])
 
   return (
-    <main className={`app ${state.away.active && state.away.dimScene ? 'is-dimmed' : ''} ${hudVisible ? 'hud-visible' : 'hud-hidden'}`}>
+    <main className={`app ${state.away.active && state.away.dimScene ? 'is-dimmed' : ''} ${hudVisible ? '' : 'hud-hidden'}`}>
+      <Suspense fallback={null}>
       <SpaceCanvas
         role={role}
         navigationMode={state.navigationMode}
@@ -293,82 +430,118 @@ export default function App() {
         scaleMode={state.scaleMode}
         selectedTargetId={state.selectedTargetId}
         timeScale={state.timeScale}
+        timePaused={state.timePaused}
+        labelsVisible={state.labelsVisible}
+        orbitsVisible={state.orbitsVisible}
+        minorBodiesVisible={state.minorBodiesVisible}
+        spacecraftVisible={state.spacecraftVisible}
+        constellationsVisible={state.constellationsVisible}
+        simResetToken={state.simResetToken}
+        fitToken={state.fitToken}
         bezelPixels={state.bezelPixels}
         cameraPose={state.camera}
         isController={isController}
         paused={state.away.active}
         exoplanetSystems={exoplanets.systems}
         onCameraPose={updateCamera}
-        onFps={setFps}
+        onFps={handleFps}
+        onSimDays={setSimDays}
+        onSelectTarget={selectTarget}
       />
+      </Suspense>
 
-      {!hudVisible && isController && !state.away.active ? (
-        <button type="button" className="hud-reveal" onClick={() => setHudVisible(true)} aria-label="Show interface">
-          <span /> HUD
-        </button>
+      {!splashGone ? (
+        <div className={`boot-splash ${booted ? 'is-done' : ''}`} aria-hidden={booted}>
+          <div className="boot-orbit"><span /><span /><span /></div>
+          <strong>SPACE SIMULATION</strong>
+          <p>{booted ? 'TELEMETRY LOCKED' : 'INITIALIZING ORBITAL MECHANICS'}</p>
+        </div>
       ) : null}
 
-      {hudVisible && isController ? (
-        <div className="cinematic-hud">
+      {isController ? (
+        <>
           <nav className="scene-switcher" aria-label="Simulation regions">
             <button type="button" className={state.sceneMode === 'solar' ? 'is-active' : ''} onClick={() => setSceneMode('solar')}>SOLAR</button>
             <button type="button" className={state.sceneMode === 'galaxy' ? 'is-active' : ''} onClick={() => setSceneMode('galaxy')}>MILKY WAY</button>
             <button type="button" className={state.sceneMode === 'sagittarius' ? 'is-active' : ''} onClick={() => setSceneMode('sagittarius')}>SGR A*</button>
           </nav>
 
-          <div className="hud-actions">
-            <button type="button" onClick={() => setCatalogOpen((open) => !open)} disabled={state.sceneMode === 'sagittarius'}>
-              {catalogOpen ? 'CLOSE CATALOG' : 'CATALOG'}
-            </button>
-            <button type="button" onClick={() => setTargetOpen((open) => !open)}>
-              {targetOpen ? 'CLOSE INFO' : 'TARGET INFO'}
-            </button>
-            <button type="button" className="hud-hide" onClick={() => setHudVisible(false)}>HIDE HUD · H</button>
+          <div className="top-toolbar">
+            <span className="fps-readout" title="Frames per second">{fps || '—'}<small>FPS</small></span>
+            <button type="button" className={`tool-button ${catalogOpen ? 'is-active' : ''}`} onClick={() => setCatalogOpen((open) => !open)}>CATALOG</button>
+            <div className="view-menu">
+              <button type="button" className={`tool-button ${viewOpen ? 'is-active' : ''}`} onClick={() => setViewOpen((open) => !open)}>VIEW</button>
+              {viewOpen ? (
+                <div className="view-popover" role="menu">
+                  <span className="view-heading">SHOW IN SCENE</span>
+                  <label className="view-row"><span>Orbits <kbd>O</kbd></span><input type="checkbox" checked={state.orbitsVisible} onChange={toggleOrbits} /></label>
+                  <label className="view-row"><span>Labels <kbd>L</kbd></span><input type="checkbox" checked={state.labelsVisible} onChange={toggleLabels} /></label>
+                  <label className="view-row"><span>Asteroid belt</span><input type="checkbox" checked={state.minorBodiesVisible} onChange={toggleBelt} /></label>
+                  <label className="view-row"><span>Spacecraft</span><input type="checkbox" checked={state.spacecraftVisible} onChange={toggleSpacecraft} /></label>
+                  <label className="view-row"><span>Constellations</span><input type="checkbox" checked={state.constellationsVisible} onChange={toggleConstellations} /></label>
+                  <div className="view-divider" />
+                  <span className="view-heading">INTERFACE</span>
+                  <label className="view-row"><span>Catalog <kbd>C</kbd></span><input type="checkbox" checked={catalogOpen} onChange={() => setCatalogOpen((open) => !open)} /></label>
+                  <label className="view-row"><span>Target panel</span><input type="checkbox" checked={targetOpen} onChange={() => setTargetOpen((open) => !open)} /></label>
+                  <label className="view-row"><span>Time bar <kbd>B</kbd></span><input type="checkbox" checked={deckVisible} onChange={() => setDeckVisible((open) => !open)} /></label>
+                  <button type="button" className="view-hide-all" onClick={() => { setHudVisible(false); setViewOpen(false) }}>HIDE ALL INTERFACE · H</button>
+                </div>
+              ) : null}
+            </div>
+            <button type="button" className="tool-button icon" onClick={enterFullscreen} aria-label="Fullscreen" title="Fullscreen">⤢</button>
+            <button type="button" className="tool-button icon" onClick={() => setPanelOpen(true)} aria-label="Settings" title="Settings">⚙</button>
           </div>
 
           {catalogOpen && state.sceneMode !== 'sagittarius' ? (
-            <aside className="catalog-panel cinematic-drawer left-drawer">
-              <div className="drawer-heading">
+            <aside className="catalog-panel">
+              <div className="catalog-heading">
                 <div>
-                  <span>{state.sceneMode === 'solar' ? 'DESTINATIONS' : 'EXOPLANET HOSTS'}</span>
+                  <span>{state.sceneMode === 'solar' ? 'OBJECT CATALOG' : 'EXOPLANET HOSTS'}</span>
                   <small>{state.sceneMode === 'solar'
-                    ? `${PRIMARY_DESTINATIONS.length + MOON_DESTINATIONS.length} CURATED OBJECTS`
+                    ? `${solarCatalog.length.toLocaleString()} OBJECTS`
                     : exoplanets.loading
                       ? 'LOADING NASA ARCHIVE'
                       : `${exoplanets.systems.length.toLocaleString()} SYSTEMS`}</small>
                 </div>
-                <button type="button" className="drawer-close" onClick={() => setCatalogOpen(false)} aria-label="Close catalog">×</button>
+                <button type="button" className="panel-close" onClick={() => setCatalogOpen(false)} aria-label="Close catalog">✕</button>
               </div>
-              <input className="catalog-search" type="search" placeholder="Search destination" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <input className="catalog-search" type="search" placeholder="Search destinations…" value={search} onChange={(event) => setSearch(event.target.value)} />
+              {state.sceneMode === 'solar' ? (
+                <div className="catalog-filters">
+                  {CATALOG_FILTERS.map((filter) => (
+                    <button type="button" key={filter.key} className={catalogFilter === filter.key ? 'is-active' : ''} onClick={() => setCatalogFilter(filter.key)}>{filter.label}</button>
+                  ))}
+                </div>
+              ) : null}
               <div className="catalog-results">
                 {state.sceneMode === 'solar'
                   ? solarResults.map((body) => (
                       <button type="button" key={body.id} className={state.selectedTargetId === body.id ? 'is-active' : ''} onClick={() => selectTarget(body.id)}>
+                        <span className={`body-dot dot-${body.kind}`} aria-hidden="true" />
                         <span><strong>{body.name}</strong><small>{bodyDisplayClass(body)}</small></span>
-                        <span>{body.parentId ? SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() : ''}</span>
+                        <span className="result-meta">{body.parentId && body.kind === 'moon' ? SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() : body.semiMajorAxisAu ? `${body.semiMajorAxisAu} AU` : ''}</span>
                       </button>
                     ))
                   : galaxyResults.map((system) => (
                       <button type="button" key={system.id} className={state.selectedTargetId === system.id ? 'is-active' : ''} onClick={() => selectTarget(system.id)}>
+                        <span className="body-dot dot-star" aria-hidden="true" />
                         <span><strong>{system.hostname}</strong><small>{system.planets.length} PLANET{system.planets.length === 1 ? '' : 'S'}</small></span>
-                        <span>{system.distancePc ? `${system.distancePc.toFixed(1)} PC` : ''}</span>
+                        <span className="result-meta">{system.distancePc ? `${system.distancePc.toFixed(1)} PC` : ''}</span>
                       </button>
                     ))}
+                {state.sceneMode === 'solar' && solarResults.length === 0 ? <p className="catalog-empty">No objects match.</p> : null}
               </div>
             </aside>
           ) : null}
 
-          {!catalogOpen && state.sceneMode !== 'sagittarius' ? (
-            <button type="button" className="drawer-tab drawer-tab-left" onClick={() => setCatalogOpen(true)}>CATALOG</button>
-          ) : null}
-
           {targetOpen ? (
-            <section className="target-panel cinematic-drawer right-drawer">
-              <div className="drawer-heading">
-                <div><span>ACTIVE TARGET</span><small>{sceneLabel(state.sceneMode)}</small></div>
-                <button type="button" className="drawer-close" onClick={() => setTargetOpen(false)} aria-label="Close target information">×</button>
+            <section className="target-panel">
+              <div className="target-head">
+                <span className="panel-kicker">ACTIVE TARGET</span>
+                <button type="button" className="panel-close" onClick={() => setTargetOpen(false)} aria-label="Close target panel">✕</button>
               </div>
-              <h1>{selectedTitle}</h1>
+              <h2>{selectedTitle}</h2>
+              {blurb ? <p className="target-blurb">{blurb}</p> : null}
               <div className="target-facts">
                 {selectedFacts.map(([label, value]) => (
                   <div key={label}><small>{label}</small><strong>{value}</strong></div>
@@ -379,38 +552,77 @@ export default function App() {
                   {selectedSystem.planets.slice(0, 10).map((planet) => <span key={planet.name}>{planet.name}</span>)}
                 </div>
               ) : null}
-              <div className="drawer-readouts">
-                <span>{roleLabel(role)}</span><span>{qualityLabel(state.quality)}</span><span>{fps || '—'} FPS</span><span>{utcTime} UTC</span>
-              </div>
-              <p className="drawer-source">{dataSource}</p>
+              {selectedMoons.length > 0 ? (
+                <div className="moon-list">
+                  <small>{selectedMoons.length} {selectedMoons.length === 1 ? 'MOON' : 'MOONS'}</small>
+                  <div className="planet-chips">
+                    {selectedMoons.slice(0, 14).map((moon) => (
+                      <button type="button" key={moon.id} onClick={() => selectTarget(moon.id)}>{moon.name}</button>
+                    ))}
+                    {selectedMoons.length > 14 ? <span className="moon-more">+{selectedMoons.length - 14}</span> : null}
+                  </div>
+                </div>
+              ) : null}
             </section>
+          ) : null}
+
+          {deckVisible ? (
+            <div className="command-deck">
+              <button type="button" className="deck-collapse" onClick={() => setDeckVisible(false)} aria-label="Hide time bar" title="Hide time bar (B)">▾</button>
+              <div className="time-deck" aria-label="Simulation time controls">
+                <button type="button" className="play-toggle" onClick={toggleTimePaused} aria-label={state.timePaused ? 'Resume time' : 'Pause time'}>
+                  {state.timePaused
+                    ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor" /></svg>
+                    : <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z" fill="currentColor" /></svg>}
+                </button>
+                <div className="time-presets">
+                  {TIME_PRESETS.map((preset) => (
+                    <button
+                      type="button"
+                      key={preset.label}
+                      className={!state.timePaused && activePreset.label === preset.label ? 'is-active' : ''}
+                      onClick={() => setTimeScale(preset.value)}
+                    >{preset.label}</button>
+                  ))}
+                </div>
+                <div className="sim-date">
+                  <small>{state.timePaused ? 'TIME HELD' : 'SIM EPOCH'}</small>
+                  <span>{formatSimDate(simDays)}</span>
+                </div>
+                <button type="button" className="now-button" onClick={resetSimTime}>NOW</button>
+              </div>
+              <nav className="control-rail" aria-label="Simulation controls">
+                <button type="button" className={state.navigationMode === 'cinematic' ? 'is-active' : ''} onClick={() => setNavigationMode('cinematic')}>CINEMATIC</button>
+                <button type="button" className={state.navigationMode === 'free' ? 'is-active' : ''} onClick={() => setNavigationMode('free')}>FREE FLIGHT</button>
+                <button type="button" onClick={fitSystem}>FIT</button>
+                <button type="button" className={tourIndex >= 0 ? 'is-active' : ''} onClick={() => setTourIndex((index) => (index >= 0 ? -1 : 0))}>{tourIndex >= 0 ? 'STOP TOUR' : 'TOUR'}</button>
+                {role === 'single'
+                  ? <button type="button" onClick={launchSecondDisplay}>+ DISPLAY</button>
+                  : <button type="button" onClick={restoreSingleDisplay}>SINGLE</button>}
+              </nav>
+            </div>
           ) : (
-            <button type="button" className="drawer-tab drawer-tab-right" onClick={() => setTargetOpen(true)}>TARGET</button>
+            <button type="button" className="deck-show" onClick={() => setDeckVisible(true)} aria-label="Show time bar" title="Show time bar (B)">▴ TIME</button>
           )}
-
-          <nav className="control-rail" aria-label="Simulation controls">
-            <button type="button" className={state.navigationMode === 'cinematic' ? 'is-active' : ''} onClick={() => setNavigationMode('cinematic')}>CINEMATIC</button>
-            <button type="button" className={state.navigationMode === 'free' ? 'is-active' : ''} onClick={() => setNavigationMode('free')}>FREE FLIGHT</button>
-            {role === 'single'
-              ? <button type="button" onClick={launchSecondDisplay}>SECOND DISPLAY</button>
-              : <button type="button" onClick={restoreSingleDisplay}>SINGLE DISPLAY</button>}
-            <button type="button" onClick={enterFullscreen}>FULLSCREEN</button>
-            <button type="button" onClick={() => setPanelOpen(true)}>SETTINGS</button>
-          </nav>
-        </div>
-      ) : null}
-
-      {hudVisible && !isController ? (
+        </>
+      ) : (
         <nav className="control-rail follower-controls" aria-label="Display controls">
           <button type="button" onClick={enterFullscreen}>FULLSCREEN DISPLAY 02</button>
         </nav>
-      ) : null}
+      )}
 
-      {state.navigationMode === 'free' && isController && hudVisible && !state.away.active ? (
-        <div className="flight-help">DRAG TO LOOK · SCROLL TO ZOOM · W A S D MOVE · Q / E VERTICAL · SHIFT BOOST</div>
-      ) : null}
-
+      {state.navigationMode === 'free' && isController && !state.away.active
+        ? <div className="flight-help">DRAG TO LOOK · SCROLL TO ZOOM · W A S D MOVE · Q / E VERTICAL · SHIFT BOOST · CLICK A BODY TO TARGET IT</div>
+        : null}
       {notice ? <button type="button" className="notice" onClick={() => setNotice('')}>{notice}</button> : null}
+
+      {tourIndex >= 0 && isController && !state.away.active ? (
+        <div className="tour-caption" aria-live="polite">
+          <span className="tour-progress">GUIDED TOUR · {tourIndex + 1} / {TOUR_STOPS.length}</span>
+          <p>{TOUR_STOPS[tourIndex].caption}</p>
+          <button type="button" onClick={() => setTourIndex(-1)}>END TOUR</button>
+        </div>
+      ) : null}
 
       {state.away.active ? (
         <section className="away-overlay" aria-live="polite">
@@ -427,10 +639,30 @@ export default function App() {
         <div className="panel-backdrop" onMouseDown={() => setPanelOpen(false)}>
           <aside className="settings-panel" onMouseDown={(event) => event.stopPropagation()}>
             <div className="panel-heading">
-              <div><span>SIMULATION CONTROL</span><h2>Display, time and away mode</h2></div>
+              <div><span>DISPLAY CONTROL</span><h2>Simulation settings</h2></div>
               <button type="button" className="icon-button" onClick={() => setPanelOpen(false)}>CLOSE</button>
             </div>
-
+            <div className="two-column-fields">
+              <label className="field-row"><span>RENDER QUALITY</span><select value={state.quality} onChange={(event) => setQuality(event.target.value as QualityPreset)}><option value="performance">Performance</option><option value="balanced">Balanced</option><option value="quality">Quality</option></select></label>
+              <label className="field-row"><span>SOLAR SCALE</span><select value={state.scaleMode} onChange={(event) => setScaleMode(event.target.value as ScaleMode)}><option value="cinematic">Cinematic compression</option><option value="scientific">Orbital-proportion mode</option></select></label>
+            </div>
+            <label className="toggle-row">
+              <span><strong>BODY LABELS</strong><small>Floating designations above planets and moons.</small></span>
+              <input type="checkbox" checked={state.labelsVisible} onChange={(event) => updateState((current) => ({ ...current, labelsVisible: event.target.checked }))} />
+            </label>
+            <label className="toggle-row">
+              <span><strong>ORBIT PATHS</strong><small>Keplerian orbit lines. Click a line to target that world.</small></span>
+              <input type="checkbox" checked={state.orbitsVisible} onChange={(event) => updateState((current) => ({ ...current, orbitsVisible: event.target.checked }))} />
+            </label>
+            <label className="toggle-row">
+              <span><strong>ASTEROID BELT</strong><small>{MINOR_DESTINATIONS.length.toLocaleString()} asteroids, trojans, TNOs, comets &amp; NEAs.</small></span>
+              <input type="checkbox" checked={state.minorBodiesVisible} onChange={(event) => updateState((current) => ({ ...current, minorBodiesVisible: event.target.checked }))} />
+            </label>
+            <label className="field-row">
+              <span>BEZEL CORRECTION · {state.bezelPixels} PX</span>
+              <input type="range" min="0" max="240" step="2" value={state.bezelPixels} onChange={(event) => updateState((current) => ({ ...current, bezelPixels: Number(event.target.value) }))} />
+            </label>
+            <div className="settings-divider"><span>AWAY MODE</span></div>
             <label className="toggle-row">
               <span><strong>AWAY MODE</strong><small>Synchronizes across both display windows.</small></span>
               <input type="checkbox" checked={state.away.active} onChange={(event) => updateAway({ active: event.target.checked })} />
@@ -441,26 +673,21 @@ export default function App() {
               <label className="toggle-row compact"><span>SHOW CLOCK</span><input type="checkbox" checked={state.away.showClock} onChange={(event) => updateAway({ showClock: event.target.checked })} /></label>
               <label className="toggle-row compact"><span>DIM SCENE</span><input type="checkbox" checked={state.away.dimScene} onChange={(event) => updateAway({ dimScene: event.target.checked })} /></label>
             </div>
-            <div className="two-column-fields">
-              <label className="field-row"><span>RENDER QUALITY</span><select value={state.quality} onChange={(event) => setQuality(event.target.value as QualityPreset)}><option value="performance">Performance</option><option value="balanced">Balanced</option><option value="quality">Quality</option></select></label>
-              <label className="field-row"><span>SOLAR SCALE</span><select value={state.scaleMode} onChange={(event) => setScaleMode(event.target.value as ScaleMode)}><option value="cinematic">Cinematic compression</option><option value="scientific">Orbital-proportion mode</option></select></label>
-            </div>
-            <label className="field-row">
-              <span>TIME RATE · {formatTimeRate(state.timeScale)}</span>
-              <select value={String(state.timeScale)} onChange={(event) => updateState((current) => ({ ...current, timeScale: Number(event.target.value) }))}>
-                {TIME_RATE_PRESETS.map((preset) => <option key={preset.label} value={String(preset.value)}>{preset.label} — {preset.detail}</option>)}
-              </select>
-            </label>
-            <label className="field-row">
-              <span>BEZEL CORRECTION · {state.bezelPixels} PX</span>
-              <input type="range" min="0" max="240" step="2" value={state.bezelPixels} onChange={(event) => updateState((current) => ({ ...current, bezelPixels: Number(event.target.value) }))} />
-            </label>
-            <div className="panel-note"><strong>CINEMATIC MATERIALS</strong><p>Layered color, relief, night lights, clouds, atmosphere scattering, solar flare and HDR bloom are active. Real time is now the default clock rate.</p></div>
-            <div className="panel-note"><strong>FULL-SCREEN VIEW</strong><p>Press H to hide every interface element. Catalog and target drawers can also collapse independently.</p></div>
-            <div className="panel-note"><strong>SHORTCUTS</strong><p>H toggles the HUD. Control + Shift + K toggles catalog. Control + Shift + I toggles target info. Control + Shift + O opens settings.</p></div>
+            <div className="panel-note"><strong>VISUAL REALISM</strong><p>Earth renders with NASA 4K day/night imagery, live terminator city lights, ocean sun-glint, and drifting cloud shadows. Other worlds stream NASA maps with procedural fallbacks.</p></div>
+            <div className="panel-note"><strong>SHORTCUTS</strong><p>Space pause · H hide all UI · B time bar · C catalog · V view menu · O orbits · L labels · Click any body, orbit, or asteroid to target it.</p></div>
+            <div className="panel-note"><strong>FIREFOX WORKFLOW</strong><p>Open the second display, move it to the right monitor, then select fullscreen in each window.</p></div>
           </aside>
         </div>
       ) : null}
+
+      <footer className="data-footer">
+        <span>{state.sceneMode === 'solar'
+          ? 'POSITIONS · KEPLERIAN J2000 APPROXIMATION'
+          : state.sceneMode === 'galaxy'
+            ? exoplanets.source
+            : 'SAGITTARIUS A* · CINEMATIC RELATIVISTIC APPROXIMATION'}</span>
+        <span>IMAGERY · NASA VISIBLE EARTH + 3D RESOURCES</span>
+      </footer>
     </main>
   )
 }

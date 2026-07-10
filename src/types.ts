@@ -26,6 +26,14 @@ export interface SharedSimulationState {
   scaleMode: ScaleMode
   selectedTargetId: string
   timeScale: number
+  timePaused: boolean
+  labelsVisible: boolean
+  orbitsVisible: boolean
+  minorBodiesVisible: boolean
+  spacecraftVisible: boolean
+  constellationsVisible: boolean
+  simResetToken: number
+  fitToken: number
   bezelPixels: number
   away: AwayState
   camera: CameraPose
@@ -45,7 +53,15 @@ export function createInitialState(sessionId: string): SharedSimulationState {
     sceneMode: 'solar',
     scaleMode: 'cinematic',
     selectedTargetId: 'earth',
-    timeScale: 1 / 86_400,
+    timeScale: 1,
+    timePaused: false,
+    labelsVisible: true,
+    orbitsVisible: true,
+    minorBodiesVisible: true,
+    spacecraftVisible: true,
+    constellationsVisible: true,
+    simResetToken: 0,
+    fitToken: 0,
     bezelPixels: 0,
     away: {
       active: false,

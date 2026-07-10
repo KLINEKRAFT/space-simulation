@@ -1,4 +1,4 @@
-const CACHE_NAME = 'space-simulation-shell-v1'
+const CACHE_NAME = 'space-simulation-shell-v2'
 const APP_SHELL = ['/', '/manifest.webmanifest', '/space-icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -18,6 +18,24 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return
 
+  // Navigations go network-first so new deployments show up immediately;
+  // the cache only serves as an offline fallback.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+          }
+          return response
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached ?? caches.match('/'))),
+    )
+    return
+  }
+
+  // Hashed build assets and static files: cache-first with background refresh.
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const network = fetch(event.request)

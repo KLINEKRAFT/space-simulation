@@ -1,4 +1,18 @@
-export type BodyKind = 'star' | 'planet' | 'dwarf' | 'candidate' | 'moon'
+import { MINOR_BODIES } from './minorBodies'
+import { SPACECRAFT_BODIES } from './spacecraft'
+
+export type BodyKind =
+  | 'star'
+  | 'planet'
+  | 'dwarf'
+  | 'candidate'
+  | 'moon'
+  | 'asteroid'
+  | 'trojan'
+  | 'tno'
+  | 'nea'
+  | 'comet'
+  | 'spacecraft'
 export type SurfaceStyle = 'sun' | 'rocky' | 'venus' | 'earth' | 'mars' | 'gas' | 'saturn' | 'ice' | 'dwarf' | 'pluto' | 'moon' | 'io' | 'titan' | 'triton'
 
 export interface RingDefinition {
@@ -26,6 +40,32 @@ export interface SolarBody {
   color: string
   atmosphereColor?: string
   rings?: RingDefinition
+  blurb?: string
+}
+
+export const BODY_BLURBS: Record<string, string> = {
+  sun: 'A G-type main-sequence star holding 99.86% of the system’s mass. Its churning photosphere sits at 5,772 K.',
+  mercury: 'The smallest planet — a cratered world of temperature extremes, swinging 600 °C between day and night.',
+  venus: 'A runaway greenhouse wrapped in sulfuric-acid clouds. Its surface glows at 465 °C under crushing pressure.',
+  earth: 'The only known living world. Watch city lights trace the continents as the terminator sweeps across the Pacific.',
+  mars: 'The rust-red desert planet, home to Olympus Mons and the ancient river valleys targeted by sample-return missions.',
+  jupiter: 'A gas giant with 2.5× the mass of every other planet combined. The Great Red Spot has raged for centuries.',
+  saturn: 'Ringed in ice and rubble spanning 280,000 km yet averaging just 10 m thick — the jewel of the system.',
+  uranus: 'An ice giant rolled onto its side, orbiting the Sun at a 98° tilt with rings almost perpendicular to its path.',
+  neptune: 'The windiest world known: supersonic methane jet streams top 2,000 km/h across its deep-blue clouds.',
+  ceres: 'The largest object in the asteroid belt, with bright salt flats gleaming inside Occator crater.',
+  pluto: 'A geologically alive dwarf planet with nitrogen glaciers flowing across its heart-shaped Sputnik Planitia.',
+  moon: 'Earth’s companion, locked in synchronous rotation — the same ancient face always turned toward us.',
+  io: 'The most volcanically active body in the solar system, resurfaced continuously by tidal heating.',
+  europa: 'A cracked ice shell over a saltwater ocean holding twice the water of all Earth’s seas.',
+  ganymede: 'The largest moon anywhere — bigger than Mercury — and the only one with its own magnetic field.',
+  titan: 'A hazy orange world with methane rain, rivers, and seas: the only moon with a dense atmosphere.',
+  enceladus: 'Geysers at its south pole vent ocean water into space, feeding Saturn’s E ring.',
+  triton: 'Neptune’s captured Kuiper Belt object, orbiting backwards with nitrogen geysers on a frozen surface.',
+  haumea: 'A dwarf planet spun into an egg shape by its 4-hour day, with its own ring and two moons.',
+  makemake: 'A bright, methane-frosted dwarf planet in the classical Kuiper Belt.',
+  eris: 'The most massive dwarf planet — its discovery triggered the redefinition that reclassified Pluto.',
+  sedna: 'A distant red world on an 11,400-year orbit reaching deep toward the inner Oort cloud.',
 }
 
 const body = (definition: SolarBody): SolarBody => definition
@@ -114,12 +154,25 @@ export const SOLAR_BODIES: SolarBody[] = [
   body({ id: 'ilmarë', name: 'Ilmarë', kind: 'moon', parentId: 'varda', radiusKm: 163, orbitKm: 4800, orbitalPeriodDays: 5.75, style: 'moon', color: '#96918a' }),
 ]
 
-export const SOLAR_BODY_MAP = new Map(SOLAR_BODIES.map((item) => [item.id, item]))
 export const PRIMARY_DESTINATIONS = SOLAR_BODIES.filter((item) => item.kind === 'planet' || item.kind === 'dwarf' || item.kind === 'candidate')
 export const MOON_DESTINATIONS = SOLAR_BODIES.filter((item) => item.kind === 'moon')
+export const MINOR_DESTINATIONS = MINOR_BODIES
+export const SPACECRAFT_DESTINATIONS = SPACECRAFT_BODIES
+/** Every selectable solar object, including the minor-body belt and craft. */
+export const ALL_SOLAR_BODIES = [...SOLAR_BODIES, ...MINOR_BODIES, ...SPACECRAFT_BODIES]
+export const SOLAR_BODY_MAP = new Map(ALL_SOLAR_BODIES.map((item) => [item.id, item]))
+
+const CLASS_LABELS: Partial<Record<BodyKind, string>> = {
+  candidate: 'DWARF-PLANET CANDIDATE',
+  asteroid: 'ASTEROID',
+  trojan: 'JUPITER TROJAN',
+  tno: 'TRANS-NEPTUNIAN',
+  nea: 'NEAR-EARTH ASTEROID',
+  comet: 'COMET',
+  spacecraft: 'SPACECRAFT',
+}
 export function bodyDisplayClass(body: SolarBody): string {
-  if (body.kind === 'candidate') return 'DWARF-PLANET CANDIDATE'
-  return body.kind.toUpperCase()
+  return CLASS_LABELS[body.kind] ?? body.kind.toUpperCase()
 }
 export const AU_KM = 149_597_870.7
 export const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0)
