@@ -1,13 +1,14 @@
 {
   "name": "space-simulation",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "check": "npm run test && npm run build",
+    "data:update": "node scripts/update-astronomy-data.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
