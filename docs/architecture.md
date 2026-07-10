@@ -43,6 +43,10 @@ The Galactic Center view is an explicitly labeled performant approximation with 
 - Add texture manifests with local optimized WebP/KTX2 derivatives and source attribution.
 - Replace the orbital-element runtime with interpolation over refreshed Horizons/SPICE vector segments.
 
+## Validation
+
+The current feature branch passes GitHub Actions installation, unit tests, TypeScript compilation, and the Vite production build. Actual dual-4K frame rate and browser window placement must still be tested on the target Mac and displays.
+
 ## Browser policy
 
 Firefox remains a supported manual workflow. Chrome-compatible browsers may use the Window Management API, when permission is granted, to place the second window automatically. A public website cannot guarantee fullscreen or monitor placement without a user gesture and browser permission.
