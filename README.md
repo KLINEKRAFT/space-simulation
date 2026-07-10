@@ -1,23 +1,20 @@
 # Space Simulation
 
-A public, browser-based scientific space explorer designed for a seamless two-monitor display, cinematic and free-flight navigation, and a synchronized away-message mode.
+A public, browser-based cinematic space explorer designed for one display or a seamless pair of matching monitors.
 
-## Current build
+## Current capabilities
 
-This branch contains the first technical proof:
-
-- procedural star field and Milky Way band;
-- Sun, Earth, and Moon demonstration scene;
-- low-precision current-time J2000 orbital model;
-- cinematic camera and manual free flight;
-- continuous left/right camera frustums for two matching displays;
-- synchronized second window using `BroadcastChannel`;
-- Chrome screen-placement enhancement with a Firefox manual fallback;
-- hidden away/settings panel with the default message **Out of the office**;
-- quality presets, fullscreen controls, FPS readout, and bezel correction;
-- installable web-app manifest.
-
-The astronomy footer deliberately labels this as a demonstration ephemeris. JPL, NASA Exoplanet Archive, Gaia, small-body catalogs, production textures, and uncertainty metadata are subsequent stages.
+- Solar System scene with the Sun, eight planets, major dwarf planets and candidates, and a broad named-moon catalog
+- NASA texture loading with deterministic procedural fallbacks
+- atmospheric rims, cloud layers, planetary rings, ACES tone mapping, and bloom
+- Milky Way scene populated from confirmed NASA Exoplanet Archive host systems
+- visitable procedural reconstructions of loaded exoplanet systems
+- Sagittarius A* approximation with an accretion disk and photon-ring treatment
+- cinematic camera and manual free flight
+- synchronized left/right browser windows, fullscreen controls, and bezel correction
+- synchronized **Out of the office** display mode
+- installable PWA and Vercel configuration
+- scheduled NASA/JPL catalog refresh workflow
 
 ## Run locally
 
@@ -26,7 +23,7 @@ npm install
 npm run dev
 ```
 
-Open the local URL shown by Vite.
+Open the displayed URL, select **Launch Second Display**, move the follower window to the right monitor in Firefox, and enter fullscreen in each window.
 
 ## Validate
 
@@ -34,20 +31,19 @@ Open the local URL shown by Vite.
 npm run check
 ```
 
-## Dual-display test
-
-1. Open the app on the left monitor.
-2. Select **Launch Second Display**.
-3. In Firefox, move the new window to the right monitor.
-4. Select fullscreen in each window.
-5. Adjust bezel correction in **Away / Settings** if the center line does not align.
-
-Chrome may place the second window automatically after screen-management permission is granted.
-
 ## Controls
 
-- Cinematic mode: automatic camera path.
-- Free flight: drag, scroll, `W A S D`, `Q / E`, and `Shift`.
-- Hidden panel shortcut: `Control + Shift + O`.
+- Drag / scroll: orbit and zoom in free-flight mode
+- `W A S D`: move
+- `Q / E`: vertical movement
+- `Shift`: boost
+- `Control + Shift + O`: settings and away mode
+- `Control + Shift + K`: object catalog
 
-See [`docs/architecture.md`](docs/architecture.md) for the catalog, accuracy, and scale-domain plan.
+## Accuracy boundary
+
+This application combines sourced astronomical parameters with visualization-oriented scale compression. NASA mission textures are used where available. Exoplanet surfaces and bodies without source maps are clearly treated as procedural reconstructions. The Sagittarius A* renderer is a cinematic approximation, not a general-relativistic scientific ray tracer.
+
+The checked-in catalog is broad but is not yet the complete set of every provisional moon, asteroid, comet, spacecraft, and Gaia star. The included data workflow is the foundation for progressively generated and tiled catalogs at that scale.
+
+See [visual realism](docs/visual-realism.md) and [architecture](docs/architecture.md).
