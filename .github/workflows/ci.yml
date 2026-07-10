@@ -5,36 +5,13 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Restore validated cinematic source
-        if: ${{ hashFiles('.cinematic-source/part-*') != '' }}
-        run: |
-          cat .cinematic-source/part-* > /tmp/cinematic.tar.gz.b64
-          base64 -d /tmp/cinematic.tar.gz.b64 > /tmp/cinematic.tar.gz
-          tar -xzf /tmp/cinematic.tar.gz
       - run: npm install
       - run: npm run check
-      - name: Publish clean source
-        if: ${{ github.event_name == 'pull_request' && hashFiles('.cinematic-source/part-*') != '' }}
-        run: |
-          rm -rf .cinematic-source
-          rm -f .github/workflows/apply-cinematic-source.yml
-          git fetch origin main
-          git checkout origin/main -- .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: add cinematic planet rendering and collapsible HUD"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
