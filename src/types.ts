@@ -1,6 +1,8 @@
 export type DisplayRole = 'single' | 'left' | 'right'
 export type NavigationMode = 'cinematic' | 'free'
 export type QualityPreset = 'balanced' | 'quality' | 'performance'
+export type SceneMode = 'solar' | 'galaxy' | 'sagittarius'
+export type ScaleMode = 'cinematic' | 'scientific'
 export type Vec3Tuple = [number, number, number]
 
 export interface CameraPose {
@@ -20,6 +22,10 @@ export interface SharedSimulationState {
   sessionId: string
   navigationMode: NavigationMode
   quality: QualityPreset
+  sceneMode: SceneMode
+  scaleMode: ScaleMode
+  selectedTargetId: string
+  timeScale: number
   bezelPixels: number
   away: AwayState
   camera: CameraPose
@@ -36,6 +42,10 @@ export function createInitialState(sessionId: string): SharedSimulationState {
     sessionId,
     navigationMode: 'cinematic',
     quality: 'balanced',
+    sceneMode: 'solar',
+    scaleMode: 'cinematic',
+    selectedTargetId: 'earth',
+    timeScale: 1,
     bezelPixels: 0,
     away: {
       active: false,
