@@ -52,6 +52,7 @@ The feature branch currently passes its GitHub Actions install, unit-test, TypeS
 - `Q / E`: vertical movement
 - `Shift`: boost
 - `Space`: pause / resume simulation time
+- `H`: hide or show the interface (clean wall-display view)
 - `Control + Shift + O`: settings and away mode
 - `Control + Shift + K`: object catalog
 

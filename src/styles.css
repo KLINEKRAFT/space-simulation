@@ -31,6 +31,13 @@ button { color: inherit; }
 .app::after { content: ""; pointer-events: none; position: absolute; inset: 0; z-index: 1; background: linear-gradient(180deg, rgba(0,0,0,.32), transparent 15%, transparent 79%, rgba(0,0,0,.5)), radial-gradient(circle at center, transparent 52%, rgba(0,0,0,.3) 100%); }
 .app.is-dimmed .space-canvas { filter: brightness(.23) saturate(.55); transition: filter .8s ease; }
 
+/* H key: hide all chrome for a clean wall-display view. */
+.instrument-bar, .scene-switcher, .catalog-toggle, .catalog-panel, .target-panel,
+.command-deck, .data-footer, .flight-help, .follower-controls { transition: opacity .35s ease, visibility .35s ease; }
+.app.hud-hidden .instrument-bar, .app.hud-hidden .scene-switcher, .app.hud-hidden .catalog-toggle,
+.app.hud-hidden .catalog-panel, .app.hud-hidden .target-panel, .app.hud-hidden .command-deck,
+.app.hud-hidden .data-footer, .app.hud-hidden .flight-help, .app.hud-hidden .follower-controls { opacity: 0; visibility: hidden; pointer-events: none; }
+
 /* ---------------------------------------------------------------- */
 /* Boot splash                                                       */
 /* ---------------------------------------------------------------- */

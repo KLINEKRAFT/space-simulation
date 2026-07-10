@@ -11,6 +11,7 @@ import type { ExoplanetSystem } from '../data/exoplanets'
 import { DAY_MS, J2000_MS } from '../data/solarCatalog'
 import type { CameraPose, DisplayRole, NavigationMode, QualityPreset, ScaleMode, SceneMode } from '../types'
 import { getViewConfiguration } from '../utils/display'
+import { advanceSimulationDays } from '../utils/simulationTime'
 import { createBlackHole } from './materials'
 import {
   CAMERA_FAR,
@@ -373,7 +374,7 @@ export function SpaceCanvas({
 
       const timeFrozen = pausedRef.current || timePausedRef.current
       if (!pausedRef.current) {
-        if (!timeFrozen) simulationDays += deltaSeconds * timeScaleRef.current
+        if (!timeFrozen) simulationDays = advanceSimulationDays(simulationDays, deltaSeconds, timeScaleRef.current)
         updateSolarScene(solar, scaleModeRef.current, simulationDays, timeFrozen ? 0 : deltaSeconds, selectedTargetRef.current)
         solar.sunUniforms.time.value += deltaSeconds
         stars.uniforms.time.value = elapsedSeconds

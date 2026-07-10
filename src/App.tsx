@@ -124,6 +124,7 @@ export default function App() {
   const [state, setState] = useState<SharedSimulationState>(() => createInitialState(getOrCreateSessionId()))
   const [panelOpen, setPanelOpen] = useState(false)
   const [catalogOpen, setCatalogOpen] = useState(() => window.innerWidth > 760)
+  const [hudVisible, setHudVisible] = useState(true)
   const [search, setSearch] = useState('')
   const [fps, setFps] = useState(0)
   const [notice, setNotice] = useState('')
@@ -175,6 +176,10 @@ export default function App() {
       if (event.code === 'Space' && isController && !typing) {
         event.preventDefault()
         updateState((current) => ({ ...current, timePaused: !current.timePaused }))
+      }
+      if (event.code === 'KeyH' && isController && !typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault()
+        setHudVisible((visible) => !visible)
       }
       if (event.code === 'Escape') setPanelOpen(false)
     }
@@ -310,7 +315,7 @@ export default function App() {
   TIME_PRESETS[0])
 
   return (
-    <main className={`app ${state.away.active && state.away.dimScene ? 'is-dimmed' : ''}`}>
+    <main className={`app ${state.away.active && state.away.dimScene ? 'is-dimmed' : ''} ${hudVisible ? '' : 'hud-hidden'}`}>
       <SpaceCanvas
         role={role}
         navigationMode={state.navigationMode}
@@ -504,7 +509,7 @@ export default function App() {
               <label className="toggle-row compact"><span>DIM SCENE</span><input type="checkbox" checked={state.away.dimScene} onChange={(event) => updateAway({ dimScene: event.target.checked })} /></label>
             </div>
             <div className="panel-note"><strong>VISUAL REALISM</strong><p>Earth renders with NASA 4K day/night imagery, live terminator city lights, ocean sun-glint, and drifting cloud shadows. Other worlds stream NASA maps with procedural fallbacks.</p></div>
-            <div className="panel-note"><strong>SHORTCUTS</strong><p>Space pauses time · Ctrl+Shift+O settings · Ctrl+Shift+K catalog · Click any body to target it.</p></div>
+            <div className="panel-note"><strong>SHORTCUTS</strong><p>Space pauses time · H hides the interface · Ctrl+Shift+O settings · Ctrl+Shift+K catalog · Click any body to target it.</p></div>
             <div className="panel-note"><strong>FIREFOX WORKFLOW</strong><p>Open the second display, move it to the right monitor, then select fullscreen in each window.</p></div>
           </aside>
         </div>
