@@ -1,4 +1,5 @@
 import { MINOR_BODIES } from './minorBodies'
+import { SPACECRAFT_BODIES } from './spacecraft'
 
 export type BodyKind =
   | 'star'
@@ -11,6 +12,7 @@ export type BodyKind =
   | 'tno'
   | 'nea'
   | 'comet'
+  | 'spacecraft'
 export type SurfaceStyle = 'sun' | 'rocky' | 'venus' | 'earth' | 'mars' | 'gas' | 'saturn' | 'ice' | 'dwarf' | 'pluto' | 'moon' | 'io' | 'titan' | 'triton'
 
 export interface RingDefinition {
@@ -155,8 +157,9 @@ export const SOLAR_BODIES: SolarBody[] = [
 export const PRIMARY_DESTINATIONS = SOLAR_BODIES.filter((item) => item.kind === 'planet' || item.kind === 'dwarf' || item.kind === 'candidate')
 export const MOON_DESTINATIONS = SOLAR_BODIES.filter((item) => item.kind === 'moon')
 export const MINOR_DESTINATIONS = MINOR_BODIES
-/** Every selectable solar object, including the generated minor-body belt. */
-export const ALL_SOLAR_BODIES = [...SOLAR_BODIES, ...MINOR_BODIES]
+export const SPACECRAFT_DESTINATIONS = SPACECRAFT_BODIES
+/** Every selectable solar object, including the minor-body belt and craft. */
+export const ALL_SOLAR_BODIES = [...SOLAR_BODIES, ...MINOR_BODIES, ...SPACECRAFT_BODIES]
 export const SOLAR_BODY_MAP = new Map(ALL_SOLAR_BODIES.map((item) => [item.id, item]))
 
 const CLASS_LABELS: Partial<Record<BodyKind, string>> = {
@@ -166,6 +169,7 @@ const CLASS_LABELS: Partial<Record<BodyKind, string>> = {
   tno: 'TRANS-NEPTUNIAN',
   nea: 'NEAR-EARTH ASTEROID',
   comet: 'COMET',
+  spacecraft: 'SPACECRAFT',
 }
 export function bodyDisplayClass(body: SolarBody): string {
   return CLASS_LABELS[body.kind] ?? body.kind.toUpperCase()

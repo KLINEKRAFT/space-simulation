@@ -136,6 +136,7 @@ button { color: inherit; }
 .dot-tno { background:#8fb0d0; color:#8fb0d0; }
 .dot-nea { background:#e08a63; color:#e08a63; }
 .dot-comet { background:#8fe6dc; color:#8fe6dc; }
+.dot-spacecraft { background:#d8e6ee; color:#d8e6ee; }
 
 .target-panel h2 { margin:10px 0 0; font-size:26px; font-weight:450; letter-spacing:.015em; color:var(--bright); }
 .target-blurb { color:#9fb4bf; font-size:11.5px; line-height:1.65; margin:10px 0 16px; }
@@ -145,7 +146,20 @@ button { color: inherit; }
 .target-facts small { color:var(--faint); font:600 8px/1 var(--mono); letter-spacing:.18em; }
 .target-facts strong { margin-top:7px; color:#d9e7ec; font:500 10.5px/1.3 var(--mono); letter-spacing:.02em; }
 .planet-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; }
-.planet-chips span { padding:6px 9px; border:1px solid var(--line); border-radius:5px; color:#93aab6; font:500 9px/1 var(--mono); letter-spacing:.06em; }
+.planet-chips span, .planet-chips button { padding:6px 9px; border:1px solid var(--line); border-radius:5px; background:transparent; color:#93aab6; font:500 9px/1 var(--mono); letter-spacing:.06em; }
+.planet-chips button { cursor:pointer; transition: color .15s ease, border-color .15s ease, background .15s ease; }
+.planet-chips button:hover { color:var(--bright); border-color:var(--line-strong); background:rgba(127,212,255,.08); }
+.moon-list { margin-top:16px; }
+.moon-list > small { display:block; color:var(--accent); font:600 8px/1 var(--mono); letter-spacing:.2em; margin-bottom:8px; }
+.moon-list .planet-chips { margin-top:0; }
+.moon-more { padding:6px 9px; color:var(--faint); font:500 9px/1 var(--mono); }
+
+/* Guided tour caption */
+.tour-caption { position:absolute; z-index:15; left:50%; bottom:150px; transform:translateX(-50%); width:min(560px, calc(100vw - 48px)); padding:16px 20px; border:1px solid var(--line-strong); border-radius:12px; background:var(--glass-solid); backdrop-filter: var(--blur); box-shadow: var(--panel-shadow); text-align:center; animation: pop-in .3s ease; }
+.tour-progress { display:block; color:var(--accent); font:600 8.5px/1 var(--mono); letter-spacing:.24em; }
+.tour-caption p { margin:10px 0 12px; color:#dceaf1; font-size:14px; line-height:1.5; font-weight:300; }
+.tour-caption button { border:1px solid var(--line); border-radius:6px; background:transparent; color:#9db3bf; font:600 8.5px/1 var(--mono); letter-spacing:.14em; padding:8px 14px; cursor:pointer; transition: all .16s ease; }
+.tour-caption button:hover { color:var(--bright); border-color:var(--line-strong); }
 
 /* ---------------------------------------------------------------- */
 /* Command deck: time controls + navigation rail                     */

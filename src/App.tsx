@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { loadExoplanetSystems, type ExoplanetSystem } from './data/exoplanets'
 import {
   BODY_BLURBS,
@@ -7,12 +7,13 @@ import {
   MINOR_DESTINATIONS,
   MOON_DESTINATIONS,
   PRIMARY_DESTINATIONS,
+  SOLAR_BODIES,
   SOLAR_BODY_MAP,
+  SPACECRAFT_DESTINATIONS,
   bodyDisplayClass,
   type BodyKind,
   type SolarBody,
 } from './data/solarCatalog'
-import { SpaceCanvas } from './space/SpaceCanvas'
 import { useDisplaySync } from './sync/useDisplaySync'
 import type {
   AwayState,
@@ -26,6 +27,10 @@ import type {
 } from './types'
 import { createInitialState } from './types'
 import { buildDisplayUrl, getDisplayRole, getOrCreateSessionId } from './utils/display'
+
+// Code-split the WebGL canvas (three.js + all shaders) into its own chunk so
+// the initial HTML/JS paints the boot splash immediately while it streams.
+const SpaceCanvas = lazy(() => import('./space/SpaceCanvas').then((module) => ({ default: module.SpaceCanvas })))
 
 function useClock(): Date {
   const [now, setNow] = useState(() => new Date())
@@ -76,7 +81,7 @@ const TIME_PRESETS: Array<{ label: string; value: number }> = [
   { label: '1 YR/S', value: 365.25 },
 ]
 
-type CatalogFilter = 'all' | 'planet' | 'moon' | 'asteroid' | 'trojan' | 'tno' | 'nea' | 'comet'
+type CatalogFilter = 'all' | 'planet' | 'moon' | 'asteroid' | 'trojan' | 'tno' | 'nea' | 'comet' | 'spacecraft'
 const CATALOG_FILTERS: Array<{ key: CatalogFilter; label: string }> = [
   { key: 'all', label: 'ALL' },
   { key: 'planet', label: 'PLANETS' },
@@ -86,11 +91,25 @@ const CATALOG_FILTERS: Array<{ key: CatalogFilter; label: string }> = [
   { key: 'tno', label: 'TNOs' },
   { key: 'nea', label: 'NEAs' },
   { key: 'comet', label: 'COMETS' },
+  { key: 'spacecraft', label: 'CRAFT' },
 ]
 function catalogGroup(kind: BodyKind): CatalogFilter {
   if (kind === 'star' || kind === 'planet' || kind === 'dwarf' || kind === 'candidate') return 'planet'
   return kind as CatalogFilter
 }
+
+const TOUR_STOPS: Array<{ scene: SceneMode; target: string; caption: string }> = [
+  { scene: 'solar', target: 'sun', caption: 'Our star — a G-type dwarf holding 99.86% of the system’s mass.' },
+  { scene: 'solar', target: 'earth', caption: 'Earth at night: city lights trace the terminator as it sweeps west.' },
+  { scene: 'solar', target: 'mars', caption: 'Mars — the rust-red desert world and target of sample-return missions.' },
+  { scene: 'solar', target: 'sc:iss', caption: 'The ISS, circling Earth every 93 minutes.' },
+  { scene: 'solar', target: 'jupiter', caption: 'Jupiter — a gas giant more massive than all other planets combined.' },
+  { scene: 'solar', target: 'saturn', caption: 'Saturn, wrapped in 280,000 km of ice and rubble.' },
+  { scene: 'solar', target: 'mb:4-vesta', caption: 'Vesta — one of ~1,100 minor bodies you can visit in the belt.' },
+  { scene: 'solar', target: 'sc:voyager1', caption: 'Voyager 1 — the most distant human-made object, in interstellar space.' },
+  { scene: 'galaxy', target: '', caption: 'The Milky Way exoplanet survey, set against real constellations.' },
+  { scene: 'sagittarius', target: 'sagittarius-a', caption: 'Sagittarius A* — the four-million-solar-mass heart of our galaxy.' },
+]
 
 function formatSimDate(simDays: number): string {
   const date = new Date(J2000_MS + simDays * DAY_MS)
@@ -99,15 +118,35 @@ function formatSimDate(simDays: number): string {
   return `${day.toUpperCase()} · ${time} UTC`
 }
 
+const SURFACE_GRAVITY: Record<string, number> = {
+  sun: 274, mercury: 3.7, venus: 8.87, earth: 9.81, mars: 3.72, jupiter: 24.79,
+  saturn: 10.44, uranus: 8.69, neptune: 11.15, pluto: 0.62, ceres: 0.27, eris: 0.82,
+  moon: 1.62, io: 1.80, europa: 1.31, ganymede: 1.43, callisto: 1.24, titan: 1.35,
+  triton: 0.78, charon: 0.29, enceladus: 0.11, mimas: 0.06, rhea: 0.26, dione: 0.23,
+}
+function formatDayLength(rotationPeriodDays?: number): string | undefined {
+  if (!rotationPeriodDays) return undefined
+  const hours = Math.abs(rotationPeriodDays) * 24
+  const retro = rotationPeriodDays < 0 ? ' (RETRO)' : ''
+  if (hours < 48) return `${hours.toFixed(1)} HRS${retro}`
+  return `${Math.abs(rotationPeriodDays).toFixed(2)} DAYS${retro}`
+}
 function bodyFacts(body: SolarBody): Array<[string, string]> {
-  const facts: Array<[string, string]> = [
-    ['CLASS', bodyDisplayClass(body)],
-    ['RADIUS', `${Math.round(body.radiusKm).toLocaleString()} KM`],
-  ]
+  const facts: Array<[string, string]> = [['CLASS', bodyDisplayClass(body)]]
+  if (body.kind !== 'spacecraft') {
+    facts.push(['RADIUS', `${Math.round(body.radiusKm).toLocaleString()} KM`])
+  }
+  if (body.kind !== 'star' && body.kind !== 'spacecraft' && body.radiusKm >= 100) {
+    facts.push(['SIZE', `${(body.radiusKm / 6371).toFixed(body.radiusKm > 3000 ? 2 : 3)} × EARTH`])
+  }
+  const gravity = SURFACE_GRAVITY[body.id]
+  if (gravity) facts.push(['GRAVITY', `${gravity} M/S² · ${(gravity / 9.81).toFixed(2)} g`])
+  const dayLength = formatDayLength(body.rotationPeriodDays)
+  if (dayLength && body.kind !== 'spacecraft') facts.push(['DAY', dayLength])
   if (body.semiMajorAxisAu) facts.push(['ORBIT', `${body.semiMajorAxisAu.toLocaleString()} AU`])
   if (body.orbitKm) facts.push(['ORBIT', `${Math.round(body.orbitKm).toLocaleString()} KM`])
   if (body.orbitalPeriodDays) facts.push(['PERIOD', `${Math.abs(body.orbitalPeriodDays).toLocaleString()} DAYS`])
-  if (body.parentId) facts.push(['PRIMARY', SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() ?? body.parentId.toUpperCase()])
+  if (body.parentId && body.kind === 'moon') facts.push(['PRIMARY', SOLAR_BODY_MAP.get(body.parentId)?.name.toUpperCase() ?? body.parentId.toUpperCase()])
   return facts
 }
 
@@ -155,6 +194,7 @@ export default function App() {
   const [deckVisible, setDeckVisible] = useState(true)
   const [viewOpen, setViewOpen] = useState(false)
   const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>('all')
+  const [tourIndex, setTourIndex] = useState(-1)
   const [hudVisible, setHudVisible] = useState(true)
   const [search, setSearch] = useState('')
   const [fps, setFps] = useState(0)
@@ -233,21 +273,30 @@ export default function App() {
     if (value > 0) setBooted(true)
   }, [])
 
-  const setNavigationMode = (navigationMode: NavigationMode) => updateState((current) => ({ ...current, navigationMode }))
+  const setNavigationMode = (navigationMode: NavigationMode) => { stopTour(); updateState((current) => ({ ...current, navigationMode })) }
   const setQuality = (quality: QualityPreset) => updateState((current) => ({ ...current, quality }))
   const setScaleMode = (scaleMode: ScaleMode) => updateState((current) => ({ ...current, scaleMode }))
   const setTimeScale = (timeScale: number) => updateState((current) => ({ ...current, timeScale, timePaused: false }))
   const toggleTimePaused = () => updateState((current) => ({ ...current, timePaused: !current.timePaused }))
   const resetSimTime = () => updateState((current) => ({ ...current, simResetToken: current.simResetToken + 1 }))
+  const stopTour = useCallback(() => setTourIndex((index) => (index >= 0 ? -1 : index)), [])
   const selectTarget = useCallback((selectedTargetId: string) => {
+    stopTour()
     updateState((current) => ({ ...current, selectedTargetId }))
     if (window.innerWidth > 1100) setTargetOpen(true)
-  }, [updateState])
+  }, [updateState, stopTour])
   const toggleOrbits = () => updateState((current) => ({ ...current, orbitsVisible: !current.orbitsVisible }))
   const toggleLabels = () => updateState((current) => ({ ...current, labelsVisible: !current.labelsVisible }))
   const toggleBelt = () => updateState((current) => ({ ...current, minorBodiesVisible: !current.minorBodiesVisible }))
+  const toggleSpacecraft = () => updateState((current) => ({ ...current, spacecraftVisible: !current.spacecraftVisible }))
+  const toggleConstellations = () => updateState((current) => ({ ...current, constellationsVisible: !current.constellationsVisible }))
+  const fitSystem = () => {
+    stopTour()
+    updateState((current) => ({ ...current, navigationMode: 'free', fitToken: current.fitToken + 1 }))
+  }
 
   const setSceneMode = (sceneMode: SceneMode) => {
+    stopTour()
     const fallbackTarget = sceneMode === 'solar'
       ? 'earth'
       : sceneMode === 'galaxy'
@@ -255,7 +304,21 @@ export default function App() {
         : 'sagittarius-a'
     updateState((current) => ({ ...current, sceneMode, selectedTargetId: fallbackTarget }))
     setSearch('')
+    setCatalogFilter('all')
   }
+
+  // Guided tour: advance to the next highlight on a timer while active.
+  useEffect(() => {
+    if (tourIndex < 0 || !isController) return
+    const stop = TOUR_STOPS[tourIndex]
+    const target = stop.target || (stop.scene === 'galaxy'
+      ? exoplanets.systems[0]?.id ?? 'exo:proxima-centauri'
+      : stop.scene === 'sagittarius' ? 'sagittarius-a' : 'earth')
+    updateState((current) => ({ ...current, sceneMode: stop.scene, selectedTargetId: target, navigationMode: 'cinematic', timePaused: false }))
+    const timer = window.setTimeout(() => setTourIndex((index) => (index + 1) % TOUR_STOPS.length), 9000)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourIndex, isController])
 
   const launchSecondDisplay = async () => {
     if (!isController) return
@@ -311,7 +374,7 @@ export default function App() {
   const normalizedSearch = search.trim().toLowerCase()
   const solarCatalog = useMemo(() => {
     const sun = SOLAR_BODY_MAP.get('sun')
-    return [...(sun ? [sun] : []), ...PRIMARY_DESTINATIONS, ...MOON_DESTINATIONS, ...MINOR_DESTINATIONS]
+    return [...(sun ? [sun] : []), ...PRIMARY_DESTINATIONS, ...MOON_DESTINATIONS, ...SPACECRAFT_DESTINATIONS, ...MINOR_DESTINATIONS]
   }, [])
   const solarResults = useMemo(() => {
     let list = solarCatalog
@@ -347,6 +410,10 @@ export default function App() {
         ? systemFacts(selectedSystem)
         : []
   const blurb = targetBlurb(state.sceneMode, selectedBody, selectedSystem)
+  const selectedMoons = useMemo(
+    () => (selectedBody ? SOLAR_BODIES.filter((item) => item.parentId === selectedBody.id && item.kind === 'moon') : []),
+    [selectedBody],
+  )
 
   const activePreset = TIME_PRESETS.reduce((closest, preset) =>
     Math.abs(Math.log(preset.value / state.timeScale)) < Math.abs(Math.log(closest.value / state.timeScale)) ? preset : closest,
@@ -354,6 +421,7 @@ export default function App() {
 
   return (
     <main className={`app ${state.away.active && state.away.dimScene ? 'is-dimmed' : ''} ${hudVisible ? '' : 'hud-hidden'}`}>
+      <Suspense fallback={null}>
       <SpaceCanvas
         role={role}
         navigationMode={state.navigationMode}
@@ -366,7 +434,10 @@ export default function App() {
         labelsVisible={state.labelsVisible}
         orbitsVisible={state.orbitsVisible}
         minorBodiesVisible={state.minorBodiesVisible}
+        spacecraftVisible={state.spacecraftVisible}
+        constellationsVisible={state.constellationsVisible}
         simResetToken={state.simResetToken}
+        fitToken={state.fitToken}
         bezelPixels={state.bezelPixels}
         cameraPose={state.camera}
         isController={isController}
@@ -377,6 +448,7 @@ export default function App() {
         onSimDays={setSimDays}
         onSelectTarget={selectTarget}
       />
+      </Suspense>
 
       {!splashGone ? (
         <div className={`boot-splash ${booted ? 'is-done' : ''}`} aria-hidden={booted}>
@@ -405,6 +477,8 @@ export default function App() {
                   <label className="view-row"><span>Orbits <kbd>O</kbd></span><input type="checkbox" checked={state.orbitsVisible} onChange={toggleOrbits} /></label>
                   <label className="view-row"><span>Labels <kbd>L</kbd></span><input type="checkbox" checked={state.labelsVisible} onChange={toggleLabels} /></label>
                   <label className="view-row"><span>Asteroid belt</span><input type="checkbox" checked={state.minorBodiesVisible} onChange={toggleBelt} /></label>
+                  <label className="view-row"><span>Spacecraft</span><input type="checkbox" checked={state.spacecraftVisible} onChange={toggleSpacecraft} /></label>
+                  <label className="view-row"><span>Constellations</span><input type="checkbox" checked={state.constellationsVisible} onChange={toggleConstellations} /></label>
                   <div className="view-divider" />
                   <span className="view-heading">INTERFACE</span>
                   <label className="view-row"><span>Catalog <kbd>C</kbd></span><input type="checkbox" checked={catalogOpen} onChange={() => setCatalogOpen((open) => !open)} /></label>
@@ -478,6 +552,17 @@ export default function App() {
                   {selectedSystem.planets.slice(0, 10).map((planet) => <span key={planet.name}>{planet.name}</span>)}
                 </div>
               ) : null}
+              {selectedMoons.length > 0 ? (
+                <div className="moon-list">
+                  <small>{selectedMoons.length} {selectedMoons.length === 1 ? 'MOON' : 'MOONS'}</small>
+                  <div className="planet-chips">
+                    {selectedMoons.slice(0, 14).map((moon) => (
+                      <button type="button" key={moon.id} onClick={() => selectTarget(moon.id)}>{moon.name}</button>
+                    ))}
+                    {selectedMoons.length > 14 ? <span className="moon-more">+{selectedMoons.length - 14}</span> : null}
+                  </div>
+                </div>
+              ) : null}
             </section>
           ) : null}
 
@@ -509,9 +594,11 @@ export default function App() {
               <nav className="control-rail" aria-label="Simulation controls">
                 <button type="button" className={state.navigationMode === 'cinematic' ? 'is-active' : ''} onClick={() => setNavigationMode('cinematic')}>CINEMATIC</button>
                 <button type="button" className={state.navigationMode === 'free' ? 'is-active' : ''} onClick={() => setNavigationMode('free')}>FREE FLIGHT</button>
+                <button type="button" onClick={fitSystem}>FIT</button>
+                <button type="button" className={tourIndex >= 0 ? 'is-active' : ''} onClick={() => setTourIndex((index) => (index >= 0 ? -1 : 0))}>{tourIndex >= 0 ? 'STOP TOUR' : 'TOUR'}</button>
                 {role === 'single'
-                  ? <button type="button" onClick={launchSecondDisplay}>SECOND DISPLAY</button>
-                  : <button type="button" onClick={restoreSingleDisplay}>SINGLE DISPLAY</button>}
+                  ? <button type="button" onClick={launchSecondDisplay}>+ DISPLAY</button>
+                  : <button type="button" onClick={restoreSingleDisplay}>SINGLE</button>}
               </nav>
             </div>
           ) : (
@@ -528,6 +615,14 @@ export default function App() {
         ? <div className="flight-help">DRAG TO LOOK · SCROLL TO ZOOM · W A S D MOVE · Q / E VERTICAL · SHIFT BOOST · CLICK A BODY TO TARGET IT</div>
         : null}
       {notice ? <button type="button" className="notice" onClick={() => setNotice('')}>{notice}</button> : null}
+
+      {tourIndex >= 0 && isController && !state.away.active ? (
+        <div className="tour-caption" aria-live="polite">
+          <span className="tour-progress">GUIDED TOUR · {tourIndex + 1} / {TOUR_STOPS.length}</span>
+          <p>{TOUR_STOPS[tourIndex].caption}</p>
+          <button type="button" onClick={() => setTourIndex(-1)}>END TOUR</button>
+        </div>
+      ) : null}
 
       {state.away.active ? (
         <section className="away-overlay" aria-live="polite">

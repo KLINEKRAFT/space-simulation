@@ -30,7 +30,10 @@ export interface SharedSimulationState {
   labelsVisible: boolean
   orbitsVisible: boolean
   minorBodiesVisible: boolean
+  spacecraftVisible: boolean
+  constellationsVisible: boolean
   simResetToken: number
+  fitToken: number
   bezelPixels: number
   away: AwayState
   camera: CameraPose
@@ -55,7 +58,10 @@ export function createInitialState(sessionId: string): SharedSimulationState {
     labelsVisible: true,
     orbitsVisible: true,
     minorBodiesVisible: true,
+    spacecraftVisible: true,
+    constellationsVisible: true,
     simResetToken: 0,
+    fitToken: 0,
     bezelPixels: 0,
     away: {
       active: false,

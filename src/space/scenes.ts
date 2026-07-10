@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import type { ExoplanetSystem } from '../data/exoplanets'
 import { DAY_MS, J2000_MS, SOLAR_BODIES, SOLAR_BODY_MAP, type SolarBody } from '../data/solarCatalog'
 import { MINOR_BODIES } from '../data/minorBodies'
+import { SPACECRAFT, type Spacecraft } from '../data/spacecraft'
+import { BRIGHT_STARS, BRIGHT_STAR_MAP, CONSTELLATIONS, LABELED_STARS } from '../data/skyCatalog'
 import type { ScaleMode, Vec3Tuple } from '../types'
 import {
   createAtmosphere,
@@ -40,6 +42,20 @@ export interface SelectionMarker {
   reticle: THREE.Sprite
   label: THREE.Sprite
 }
+export interface CometTailHandle {
+  group: THREE.Group
+  uniforms: { fade: { value: number } }
+}
+export interface SpacecraftEntry {
+  craft: Spacecraft
+  sprite: THREE.Sprite
+  label: THREE.Sprite
+}
+export interface SpacecraftHandle {
+  group: THREE.Group
+  entries: SpacecraftEntry[]
+  positions: Map<string, THREE.Vector3>
+}
 export interface SolarScene {
   group: THREE.Group
   visuals: Map<string, BodyVisual>
@@ -50,6 +66,8 @@ export interface SolarScene {
   orbitPickables: THREE.Object3D[]
   belt: MinorBelt
   marker: SelectionMarker
+  cometTail: CometTailHandle
+  spacecraft: SpacecraftHandle
 }
 export interface GalaxyScene {
   group: THREE.Group
@@ -59,6 +77,7 @@ export interface GalaxyScene {
   detailGroup: THREE.Group
   currentDetailId: string
   detailSunUniforms?: { time: { value: number } }
+  constellations: THREE.Group
 }
 export interface StarFieldHandle {
   points: THREE.Points
@@ -669,6 +688,119 @@ function setLabelText(label: THREE.Sprite, name: string): void {
   previous?.dispose()
 }
 
+/* ------------------------------------------------------------------ */
+/* Comet tails, spacecraft markers, and the constellation sky.        */
+/* ------------------------------------------------------------------ */
+
+const SKY_RADIUS = 2600
+
+function raDecToVector(raDeg: number, decDeg: number, radius: number, out: THREE.Vector3): void {
+  const ra = THREE.MathUtils.degToRad(raDeg)
+  const dec = THREE.MathUtils.degToRad(decDeg)
+  out.set(Math.cos(dec) * Math.cos(ra), Math.sin(dec), Math.cos(dec) * Math.sin(ra)).multiplyScalar(radius)
+}
+
+function cometTailCone(wideRadius: number, height: number, near: string, far: string, strength: number): THREE.Mesh {
+  // Apex (point) at the nucleus, wide base trailing away along -Y.
+  const geometry = new THREE.ConeGeometry(wideRadius, height, 28, 1, true)
+  geometry.translate(0, -height / 2, 0)
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      nearColor: { value: new THREE.Color(near) },
+      farColor: { value: new THREE.Color(far) },
+      strength: { value: strength },
+    },
+    vertexShader: /* glsl */ `
+      varying float vAlong;
+      void main() {
+        vAlong = uv.y; // 1 at the nucleus apex, 0 at the trailing base
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 nearColor;
+      uniform vec3 farColor;
+      uniform float strength;
+      varying float vAlong;
+      void main() {
+        float a = clamp(vAlong, 0.0, 1.0);
+        vec3 color = mix(farColor, nearColor, a);
+        float alpha = pow(a, 1.5) * strength;
+        gl_FragColor = vec4(color * (0.4 + a * 0.9), alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  })
+  return new THREE.Mesh(geometry, material)
+}
+
+function createCometTail(): CometTailHandle {
+  const group = new THREE.Group()
+  group.visible = false
+  const uniforms = { fade: { value: 0 } }
+  // Broad, curved-feeling dust tail plus a slim, straight ion tail.
+  group.add(cometTailCone(0.9, 7.5, '#fff0d0', '#c9a05a', 0.5))
+  group.add(cometTailCone(0.32, 10.5, '#cfe6ff', '#4d79c0', 0.42))
+  return { group, uniforms }
+}
+
+function createSpacecraftMarker(): THREE.Sprite {
+  const [canvas, context] = makeCanvas(64, 64)
+  context.translate(32, 32)
+  context.rotate(Math.PI / 4)
+  context.strokeStyle = 'rgba(216, 230, 238, 0.95)'
+  context.lineWidth = 5
+  context.strokeRect(-13, -13, 26, 26)
+  context.fillStyle = 'rgba(150, 210, 240, 0.55)'
+  context.fillRect(-6, -6, 12, 12)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }))
+  sprite.renderOrder = 19
+  return sprite
+}
+
+interface SpacecraftEntryInternal extends SpacecraftEntry {
+  helioBody?: SolarBody
+}
+
+function createSpacecraft(): SpacecraftHandle {
+  const group = new THREE.Group()
+  const entries: SpacecraftEntry[] = []
+  const positions = new Map<string, THREE.Vector3>()
+  for (const craft of SPACECRAFT) {
+    const sprite = createSpacecraftMarker()
+    sprite.userData.bodyId = craft.id
+    const label = createLabelSprite(craft.body.name)
+    group.add(sprite)
+    group.add(label)
+    const entry: SpacecraftEntryInternal = { craft, sprite, label }
+    if (craft.motion === 'heliocentric') {
+      entry.helioBody = {
+        ...craft.body,
+        orbitalPeriodDays: 365.25 * Math.pow(craft.semiMajorAxisAu ?? 1, 1.5),
+        eccentricity: craft.eccentricity ?? 0,
+        inclinationDeg: craft.helioInclinationDeg ?? 0,
+        meanLongitudeDeg: craft.meanLongitudeDeg ?? 0,
+      }
+    }
+    entries.push(entry)
+    positions.set(craft.id, new THREE.Vector3())
+  }
+  return { group, entries, positions }
+}
+
 export function buildSolarScene(anisotropy: number, scaleMode: ScaleMode): SolarScene {
   const group = new THREE.Group()
   const visuals = new Map<string, BodyVisual>()
@@ -744,8 +876,16 @@ export function buildSolarScene(anisotropy: number, scaleMode: ScaleMode): Solar
   group.add(belt.points)
   const marker = createSelectionMarker()
   group.add(marker.group)
+  const cometTail = createCometTail()
+  group.add(cometTail.group)
+  const spacecraft = createSpacecraft()
+  group.add(spacecraft.group)
+  for (const entry of spacecraft.entries) pickables.push(entry.sprite)
 
-  return { group, visuals, positions, sunUniforms: sun.uniforms, light, pickables, orbitPickables, belt, marker }
+  return {
+    group, visuals, positions, sunUniforms: sun.uniforms, light,
+    pickables, orbitPickables, belt, marker, cometTail, spacecraft,
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -800,9 +940,86 @@ export function buildGalaxyScene(systems: ExoplanetSystem[]): GalaxyScene {
   const starPoints = new THREE.Points(geometry, material)
   group.add(starPoints)
   group.add(createMilkyWay(64_000))
+  const constellations = createConstellations()
+  group.add(constellations)
   const detailGroup = new THREE.Group()
   group.add(detailGroup)
-  return { group, positions, systems: systemMap, starPoints, detailGroup, currentDetailId: '' }
+  return { group, positions, systems: systemMap, starPoints, detailGroup, currentDetailId: '', constellations }
+}
+
+function createConstellations(): THREE.Group {
+  const group = new THREE.Group()
+  const stars = BRIGHT_STARS
+  const count = stars.length
+  const positions = new Float32Array(count * 3)
+  const colors = new Float32Array(count * 3)
+  const sizes = new Float32Array(count)
+  const mags = new Float32Array(count)
+  const phases = new Float32Array(count)
+  const scratch = new THREE.Vector3()
+  const color = new THREE.Color()
+  const random = seededRandom('bright-stars')
+  stars.forEach((star, index) => {
+    raDecToVector(star.raDeg, star.decDeg, SKY_RADIUS, scratch)
+    positions[index * 3] = scratch.x
+    positions[index * 3 + 1] = scratch.y
+    positions[index * 3 + 2] = scratch.z
+    const mag01 = THREE.MathUtils.clamp((1.8 - star.mag) / 3.4, 0.3, 1)
+    color.set(star.color ?? '#eef2ff')
+    const brightness = 0.9 + mag01 * 1.1
+    colors[index * 3] = color.r * brightness
+    colors[index * 3 + 1] = color.g * brightness
+    colors[index * 3 + 2] = color.b * brightness
+    sizes[index] = 2.0 + mag01 * 2.6
+    mags[index] = mag01
+    phases[index] = random()
+  })
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1))
+  geometry.setAttribute('mag', new THREE.BufferAttribute(mags, 1))
+  geometry.setAttribute('phase', new THREE.BufferAttribute(phases, 1))
+  const { material } = starPointsMaterial({ maxPx: 64, twinkle: 0.3, opacity: 1, spikes: 1 })
+  geometry.computeBoundingSphere()
+  const points = new THREE.Points(geometry, material)
+  points.frustumCulled = false
+  group.add(points)
+
+  const linePoints: THREE.Vector3[] = []
+  for (const constellation of CONSTELLATIONS) {
+    for (const [a, b] of constellation.lines) {
+      const starA = BRIGHT_STAR_MAP.get(a)
+      const starB = BRIGHT_STAR_MAP.get(b)
+      if (!starA || !starB) continue
+      const va = new THREE.Vector3()
+      const vb = new THREE.Vector3()
+      raDecToVector(starA.raDeg, starA.decDeg, SKY_RADIUS, va)
+      raDecToVector(starB.raDeg, starB.decDeg, SKY_RADIUS, vb)
+      linePoints.push(va, vb)
+    }
+  }
+  const lines = new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(linePoints),
+    new THREE.LineBasicMaterial({ color: 0x77a6c6, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }),
+  )
+  lines.frustumCulled = false
+  group.add(lines)
+
+  for (const id of LABELED_STARS) {
+    const star = BRIGHT_STAR_MAP.get(id)
+    if (!star) continue
+    const label = createLabelSprite(star.name)
+    raDecToVector(star.raDeg, star.decDeg, SKY_RADIUS, scratch)
+    label.position.copy(scratch)
+    const scale = SKY_RADIUS * 0.04
+    label.scale.set(scale, scale * 0.25, 1)
+    ;(label.material as THREE.SpriteMaterial).opacity = 0.72
+    label.visible = true
+    group.add(label)
+  }
+  group.visible = false
+  return group
 }
 
 function clearGroup(group: THREE.Group): void {
@@ -955,6 +1172,95 @@ export function updateSelectionMarker(
   marker.reticle.scale.setScalar(reticleScale)
   marker.label.position.set(SCRATCH_B.x, SCRATCH_B.y + reticleScale * 0.5, SCRATCH_B.z)
   marker.label.scale.set(reticleScale * 2.4, reticleScale * 0.6, 1)
+}
+
+const TAIL_DOWN = new THREE.Vector3(0, -1, 0)
+const TAIL_DIR = new THREE.Vector3()
+const TAIL_QUAT = new THREE.Quaternion()
+
+/** Trails an anti-sunward tail from the selected comet. */
+export function updateCometTail(solar: SolarScene, selectedId: string, visible: boolean): void {
+  const tail = solar.cometTail
+  const index = solar.belt.indexById.get(selectedId)
+  const body = index === undefined ? undefined : solar.belt.bodies[index]
+  const active = visible && body?.kind === 'comet'
+  tail.uniforms.fade.value += ((active ? 1 : 0) - tail.uniforms.fade.value) * 0.12
+  const materials = tail.group.children as THREE.Mesh[]
+  for (const mesh of materials) {
+    const material = mesh.material as THREE.ShaderMaterial
+    if (material.uniforms.strength) {
+      material.uniforms.strength.value = (mesh === materials[0] ? 0.5 : 0.42) * tail.uniforms.fade.value
+    }
+  }
+  tail.group.visible = tail.uniforms.fade.value > 0.02
+  if (!tail.group.visible || index === undefined) return
+  getMinorBodyPosition(solar, selectedId, SCRATCH_B)
+  tail.group.position.copy(SCRATCH_B)
+  // Point the tail away from the Sun (at the origin).
+  TAIL_DIR.copy(SCRATCH_B).normalize()
+  TAIL_QUAT.setFromUnitVectors(TAIL_DOWN, TAIL_DIR)
+  tail.group.quaternion.copy(TAIL_QUAT)
+  // Longer, brighter nearer the Sun.
+  const helio = Math.max(20, SCRATCH_B.length())
+  tail.group.scale.setScalar(THREE.MathUtils.clamp(120 / helio, 0.7, 3.4))
+}
+
+/** Reads the current position of a spacecraft into `out`; false if absent. */
+export function getSpacecraftPosition(solar: SolarScene, id: string, out: THREE.Vector3): boolean {
+  const position = solar.spacecraft.positions.get(id)
+  if (!position) return false
+  out.copy(position)
+  return true
+}
+
+const CRAFT_SCRATCH = new THREE.Vector3()
+
+/** Positions spacecraft markers relative to Earth/Sun each frame. */
+export function updateSpacecraft(
+  solar: SolarScene,
+  camera: THREE.Camera,
+  elapsedDays: number,
+  scaleMode: ScaleMode,
+  selectedId: string,
+  visible: boolean,
+): void {
+  const handle = solar.spacecraft
+  handle.group.visible = visible
+  if (!visible) return
+  const earth = solar.positions.get('earth') ?? SCRATCH_A.set(0, 0, 0)
+  const earthRadius = bodyRadius(SOLAR_BODY_MAP.get('earth')!, scaleMode)
+  for (const entry of handle.entries as SpacecraftEntryInternal[]) {
+    const craft = entry.craft
+    const out = handle.positions.get(craft.id)!
+    if (craft.motion === 'earth-orbit') {
+      const r = earthRadius * (craft.altitudeFactor ?? 1.3)
+      const angle = ((elapsedDays * 1440) / (craft.periodMinutes ?? 92)) * Math.PI * 2
+      const inclination = THREE.MathUtils.degToRad(craft.inclinationDeg ?? 0)
+      const x = Math.cos(angle) * r
+      const z = Math.sin(angle) * r
+      out.set(x, -z * Math.sin(inclination), z * Math.cos(inclination)).add(earth)
+    } else if (craft.motion === 'earth-l2') {
+      CRAFT_SCRATCH.copy(earth).normalize()
+      out.copy(earth).addScaledVector(CRAFT_SCRATCH, earthRadius * 2.4 + 3.5)
+    } else if (craft.motion === 'heliocentric' && entry.helioBody) {
+      orbitalPositionInto(out, entry.helioBody, primaryOrbitRadius(entry.helioBody, scaleMode), elapsedDays)
+    } else {
+      raDecToVector(craft.raDeg ?? 0, craft.decDeg ?? 0, primaryOrbitRadius(craft.body, scaleMode), out)
+    }
+    entry.sprite.position.copy(out)
+    const distance = camera.position.distanceTo(out)
+    entry.sprite.scale.setScalar(THREE.MathUtils.clamp(distance * 0.02, 0.4, 60))
+    const labelMaterial = entry.label.material as THREE.SpriteMaterial
+    const selected = selectedId === craft.id
+    const labelTarget = selected ? 1 : distance < 55 ? 0.7 : 0
+    labelMaterial.opacity += (labelTarget - labelMaterial.opacity) * 0.14
+    entry.label.visible = labelMaterial.opacity > 0.02
+    if (entry.label.visible) {
+      const scale = Math.max(distance * 0.05, 1.4)
+      entry.label.position.set(out.x, out.y + entry.sprite.scale.y * 0.6 + scale * 0.05, out.z)
+      entry.label.scale.set(scale, scale * 0.25, 1)
+    }
+  }
 }
 
 export function disposeObject(object: THREE.Object3D): void {

@@ -7,6 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js'
+import { VRButton } from 'three/addons/webxr/VRButton.js'
 import type { ExoplanetSystem } from '../data/exoplanets'
 import { DAY_MS, J2000_MS } from '../data/solarCatalog'
 import type { CameraPose, DisplayRole, NavigationMode, QualityPreset, ScaleMode, SceneMode } from '../types'
@@ -22,11 +23,14 @@ import {
   createStarField,
   disposeObject,
   getMinorBodyPosition,
+  getSpacecraftPosition,
   rebuildExoplanetDetail,
   tuple,
+  updateCometTail,
   updateSelectionMarker,
   updateSolarLabels,
   updateSolarScene,
+  updateSpacecraft,
 } from './scenes'
 
 interface SpaceCanvasProps {
@@ -41,7 +45,10 @@ interface SpaceCanvasProps {
   labelsVisible: boolean
   orbitsVisible: boolean
   minorBodiesVisible: boolean
+  spacecraftVisible: boolean
+  constellationsVisible: boolean
   simResetToken: number
+  fitToken: number
   bezelPixels: number
   cameraPose: CameraPose
   isController: boolean
@@ -65,7 +72,10 @@ export function SpaceCanvas({
   labelsVisible,
   orbitsVisible,
   minorBodiesVisible,
+  spacecraftVisible,
+  constellationsVisible,
   simResetToken,
+  fitToken,
   bezelPixels,
   cameraPose,
   isController,
@@ -88,7 +98,10 @@ export function SpaceCanvas({
   const labelsVisibleRef = useRef(labelsVisible)
   const orbitsVisibleRef = useRef(orbitsVisible)
   const minorBodiesVisibleRef = useRef(minorBodiesVisible)
+  const spacecraftVisibleRef = useRef(spacecraftVisible)
+  const constellationsVisibleRef = useRef(constellationsVisible)
   const simResetTokenRef = useRef(simResetToken)
+  const fitTokenRef = useRef(fitToken)
   const bezelRef = useRef(bezelPixels)
   const navigationModeRef = useRef(navigationMode)
   const pausedRef = useRef(paused)
@@ -109,7 +122,10 @@ export function SpaceCanvas({
   labelsVisibleRef.current = labelsVisible
   orbitsVisibleRef.current = orbitsVisible
   minorBodiesVisibleRef.current = minorBodiesVisible
+  spacecraftVisibleRef.current = spacecraftVisible
+  constellationsVisibleRef.current = constellationsVisible
   simResetTokenRef.current = simResetToken
+  fitTokenRef.current = fitToken
   bezelRef.current = bezelPixels
   navigationModeRef.current = navigationMode
   pausedRef.current = paused
@@ -136,7 +152,20 @@ export function SpaceCanvas({
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.05
     renderer.shadowMap.enabled = false
+    renderer.xr.enabled = true
     container.appendChild(renderer.domElement)
+
+    // Offer an Enter-VR button only where WebXR immersive sessions exist —
+    // a callback to the EarthVR origins of this project.
+    let vrButton: HTMLElement | null = null
+    if (navigator.xr && isController) {
+      navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+        if (!supported) return
+        vrButton = VRButton.createButton(renderer)
+        vrButton.style.cssText += ';position:absolute;top:72px;bottom:auto;left:50%;transform:translateX(-50%);z-index:14;'
+        container.appendChild(vrButton)
+      }).catch(() => {})
+    }
 
     const renderPass = new RenderPass(scene, camera)
     const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.55, 0.88)
@@ -181,11 +210,28 @@ export function SpaceCanvas({
     let lastSimDaysSent = 0
     let frameCount = 0
     let fpsWindowStart = performance.now()
-    let animationFrame = 0
     let simulationDays = (Date.now() - J2000_MS) / DAY_MS
     let activeScaleMode = scaleModeRef.current
     let activeSimResetToken = simResetTokenRef.current
+    let activeFitToken = fitTokenRef.current
     let elapsedSeconds = 0
+
+    // "Fit system": ease to a wide overview of the current scene.
+    let fitActive = false
+    let fitElapsed = 0
+    const fitPos = new THREE.Vector3()
+    const fitTarget = new THREE.Vector3()
+    const computeFitPose = () => {
+      fitTarget.set(0, 0, 0)
+      if (sceneModeRef.current === 'solar') {
+        const spread = scaleModeRef.current === 'scientific' ? 620 : 360
+        fitPos.set(spread * 0.26, spread * 0.62, spread)
+      } else if (sceneModeRef.current === 'galaxy') {
+        fitPos.set(70, 240, 560)
+      } else {
+        fitPos.set(0, 14, 52)
+      }
+    }
 
     const applyQuality = () => {
       const cap = qualityRef.current === 'quality' ? 1.6 : qualityRef.current === 'balanced' ? 1.1 : 0.75
@@ -276,6 +322,9 @@ export function SpaceCanvas({
       // Minor bodies live in the point belt, not as meshes — read their live position.
       if (getMinorBodyPosition(solar, id, minorScratch)) {
         return { position: minorScratch.clone(), radius: 0.32 }
+      }
+      if (getSpacecraftPosition(solar, id, minorScratch)) {
+        return { position: minorScratch.clone(), radius: 0.28 }
       }
       const earth = solar.visuals.get('earth')!
       return { position: solar.positions.get('earth')?.clone() ?? new THREE.Vector3(), radius: earth.radius }
@@ -391,8 +440,7 @@ export function SpaceCanvas({
     renderer.domElement.addEventListener('pointerup', onPointerUp)
 
     const render = (now: number) => {
-      animationFrame = requestAnimationFrame(render)
-      // Clamp both ways: the first rAF timestamp can predate scene setup,
+      // Clamp both ways: the first frame timestamp can predate scene setup,
       // and a negative delta would turn the easing lerps into extrapolation.
       const deltaSeconds = THREE.MathUtils.clamp((now - previousTime) / 1000, 0, 0.05)
       previousTime = now
@@ -429,16 +477,39 @@ export function SpaceCanvas({
         blackHoleGroup.rotation.y += deltaSeconds * 0.012
         galacticCenterDust.rotation.y -= deltaSeconds * 0.018
       }
+      if (sceneModeRef.current === 'solar') {
+        updateSpacecraft(solar, camera, simulationDays, scaleModeRef.current, selectedTargetRef.current, spacecraftVisibleRef.current)
+        updateCometTail(solar, selectedTargetRef.current, minorBodiesVisibleRef.current)
+      }
       if (sceneModeRef.current === 'sagittarius') blackHole.faceCamera(camera.position)
       if (sceneModeRef.current === 'galaxy') rebuildExoplanetDetail(galaxy, selectedTargetRef.current)
-      updateCinematicCamera(now, deltaSeconds)
-      moveFreeCamera(deltaSeconds)
+      galaxy.constellations.visible = sceneModeRef.current === 'galaxy' && constellationsVisibleRef.current
+
+      if (activeFitToken !== fitTokenRef.current) {
+        activeFitToken = fitTokenRef.current
+        computeFitPose()
+        fitActive = true
+        fitElapsed = 0
+      }
+      if (fitActive && isControllerRef.current) {
+        fitElapsed += deltaSeconds
+        const ease = 1 - Math.exp(-deltaSeconds * 3.0)
+        camera.position.lerp(fitPos, ease)
+        controls.target.lerp(fitTarget, ease)
+        if (fitElapsed > 1.8) fitActive = false
+      } else {
+        updateCinematicCamera(now, deltaSeconds)
+        moveFreeCamera(deltaSeconds)
+      }
       controls.update()
       publishPose(now)
       publishSimDays(now)
       updateSolarLabels(solar, camera, labelsVisibleRef.current && sceneModeRef.current === 'solar')
       updateSelectionMarker(solar, camera, selectedTargetRef.current, sceneModeRef.current === 'solar' && minorBodiesVisibleRef.current)
-      composer.render()
+      // In an immersive session the composer's post chain is bypassed; the XR
+      // rig drives both eyes through the plain renderer.
+      if (renderer.xr.isPresenting) renderer.render(scene, camera)
+      else composer.render()
       frameCount += 1
       if (now - fpsWindowStart >= 1000) {
         onFpsRef.current(Math.round((frameCount * 1000) / (now - fpsWindowStart)))
@@ -453,13 +524,14 @@ export function SpaceCanvas({
     const onKeyUp = (event: KeyboardEvent) => keyState.delete(event.code)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
-    animationFrame = requestAnimationFrame((now) => {
-      previousTime = now
-      render(now)
-    })
+    previousTime = performance.now()
+    // setAnimationLoop (rather than requestAnimationFrame) lets the WebXR rig
+    // drive the frame loop when an immersive session is active.
+    renderer.setAnimationLoop(render)
 
     return () => {
-      cancelAnimationFrame(animationFrame)
+      renderer.setAnimationLoop(null)
+      vrButton?.remove()
       resizeObserver.disconnect()
       window.removeEventListener('resize', resize)
       window.removeEventListener('keydown', onKeyDown)

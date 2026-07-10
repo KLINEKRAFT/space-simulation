@@ -24,6 +24,10 @@ Three.js and its official example add-ons are distributed under the MIT License.
 
 Planetary maps are loaded from NASA 3D Resources when available, and exoplanet system data comes from the NASA Exoplanet Archive. NASA imagery and media are used as scientific visualization source material; individual asset credits and restrictions should continue to be reviewed before packaging assets locally or using the project commercially.
 
+## Astronomical catalogs
+
+Bright-star positions and magnitudes for the constellation sky are an approximate, hand-curated subset in the spirit of the HYG database (Hipparcos/Yale/Gliese). Minor-body and spacecraft orbital elements are approximate published values or representative parameters for visualization; they are not a substitute for authoritative ephemerides.
+
 ## Fonts
 
 Space Grotesk and IBM Plex Mono are served via Google Fonts under the SIL Open Font License 1.1.
