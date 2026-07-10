@@ -31,6 +31,8 @@ Open the displayed URL, select **Launch Second Display**, move the follower wind
 npm run check
 ```
 
+The feature branch currently passes its GitHub Actions install, unit-test, TypeScript, and production-build checks.
+
 ## Controls
 
 - Drag / scroll: orbit and zoom in free-flight mode
