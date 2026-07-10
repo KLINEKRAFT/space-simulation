@@ -1,67 +1,47 @@
 # Architecture
 
-## Current proof
+## Runtime layers
 
-The first proof validates the expensive and failure-prone parts of the product before large astronomy catalogs are introduced:
+- **React instrument layer** — catalogs, search, scene selection, away mode, calibration, and data provenance.
+- **Three.js renderer** — Solar System, galaxy, exoplanet-detail, and Sagittarius A* scenes.
+- **Display synchronization** — `BroadcastChannel` with a `localStorage` fallback; one controller and one follower viewport.
+- **Catalog layer** — curated built-in Solar System data plus generated NASA Exoplanet Archive and JPL Horizons files.
+- **PWA layer** — installable shell and same-origin runtime caching.
 
-- one WebGL scene rendered as either a single viewport or two adjacent view offsets;
-- a controller window and a synchronized follower window;
-- `BroadcastChannel` with a `localStorage` event fallback;
-- a hidden, synchronized away-message panel;
-- cinematic and manual navigation modes;
-- adaptive pixel-ratio caps for dual 4K monitors;
-- a low-precision J2000 demonstration ephemeris for the Sun, Earth, and Moon.
+## Coordinate domains
 
-The two windows use the same conceptual camera. `PerspectiveCamera.setViewOffset()` assigns the left and right halves of a single wide frustum. Bezel correction inserts a narrow, intentionally unrendered strip between the viewports.
+A single world coordinate scale is not used for planetary surfaces, the Solar System, and the Milky Way. Each scene has a local coordinate domain and camera behavior. This avoids floating-point precision loss and allows deliberate transitions later.
 
-## Accuracy boundary
+## Data pipeline
 
-The proof is not yet the final scientific ephemeris. Its footer labels the current orbital model as a low-precision demonstration. The production data pipeline will distinguish:
+`scripts/update-astronomy-data.mjs` creates:
 
-1. measured values;
-2. derived values;
-3. estimated values;
-4. procedural visual reconstructions;
-5. unknown values.
+- `public/data/exoplanets.json` from the NASA Exoplanet Archive `pscomppars` table.
+- `public/data/solar-vectors.json` from JPL Horizons `VECTORS` queries.
 
-No procedural exoplanet surface will be presented as an observed image.
+A weekly GitHub Action refreshes the generated files. The app uses the exoplanet file directly and retains Horizons vectors as the foundation for replacing the built-in orbital-element model.
 
-## Planned data pipeline
+## Current rendering domains
 
 ### Solar System
 
-- JPL Horizons or generated SPICE-derived state vectors;
-- versioned, compressed interpolation segments for browser use;
-- JPL Small-Body Database identifiers and classifications;
-- natural-satellite and dwarf-planet catalogs;
-- progressive loading for asteroids, comets, spacecraft, and trans-Neptunian objects.
+The renderer includes the Sun, eight planets, major dwarf planets and candidates, and a broad named-moon catalog. Hierarchical moon positions are calculated relative to their parent body. Cinematic and orbital-proportion display modes are separate so readability is not confused with literal scale.
 
-### Stars and planetary systems
+### Milky Way and planetary systems
 
-- NASA Exoplanet Archive for confirmed planets, candidates, and host-star measurements;
-- Gaia astrometry for positions, distances, proper motion, and photometry;
-- confidence and provenance metadata stored with every field;
-- binary or columnar catalog chunks loaded by galactic sector.
+Confirmed exoplanet hosts are loaded from NASA data and placed from published right ascension, declination, and distance when available. Selecting a host generates a local system view. Exoplanet surfaces remain procedural because observed global surface maps do not exist.
 
-### Milky Way and Sagittarius A*
+### Sagittarius A*
 
-- measured catalog stars where practical;
-- a procedural density model for the unresolved galactic population;
-- layered dust and emission structures;
-- a GPU black-hole visualization using a documented approximation rather than claiming full real-time general-relativistic ray tracing.
+The Galactic Center view is an explicitly labeled performant approximation with an event-horizon silhouette, photon ring, accretion flow, star density, tone mapping, and bloom. It is not a full general-relativistic ray tracer.
 
-## Scale domains
+## Next data-volume milestones
 
-The final engine will use floating origins and separate scale domains:
-
-- body surface;
-- local moon system;
-- planetary system;
-- nearby stellar neighborhood;
-- galactic space;
-- galactic center.
-
-Transitions can appear continuous while coordinates are rebased behind the scenes.
+- Generate the complete current natural-satellite and small-body index from JPL source tables.
+- Partition minor bodies by spatial tile and magnitude for progressive loading.
+- Add a selected Gaia host-star subset for real astrometric placement and proper motion.
+- Add texture manifests with local optimized WebP/KTX2 derivatives and source attribution.
+- Replace the orbital-element runtime with interpolation over refreshed Horizons/SPICE vector segments.
 
 ## Browser policy
 
