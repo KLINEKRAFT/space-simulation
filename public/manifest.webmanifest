@@ -1,0 +1,17 @@
+{
+  "name": "Space Simulation",
+  "short_name": "Space Sim",
+  "description": "A dual-display scientific space explorer.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "background_color": "#03070b",
+  "theme_color": "#03070b",
+  "icons": [
+    {
+      "src": "/space-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
